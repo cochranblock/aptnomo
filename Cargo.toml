@@ -1,0 +1,46 @@
+# Unlicense — cochranblock.org
+# Contributors: GotEmCoach, KOVA, Claude Opus 4.6
+
+[package]
+name = "aptnomo"
+version = "0.1.0"
+edition = "2024"
+description = "Tiny binary APT threat hunter. Detects Advanced Persistent Threats on bare metal. No cloud, no agent, no bloat."
+license = "Unlicense"
+repository = "https://github.com/cochranblock/aptnomo"
+keywords = ["apt", "threat-hunting", "security", "memory-safe", "tiny-binary"]
+categories = ["command-line-utilities"]
+
+[features]
+default = []
+tests = ["exopack"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+libc = "0.2"
+
+[dev-dependencies]
+
+[dependencies.exopack]
+path = "../exopack"
+optional = true
+features = ["triple_sims"]
+
+[[bin]]
+name = "aptnomo"
+path = "src/main.rs"
+
+[[bin]]
+name = "aptnomo-test"
+path = "src/bin/aptnomo-test.rs"
+required-features = ["tests"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
