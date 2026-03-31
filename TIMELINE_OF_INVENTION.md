@@ -34,3 +34,13 @@
 **What:** Full documentation suite: PROOF_OF_ARTIFACTS.md, TIMELINE_OF_INVENTION.md, govdocs/SECURITY.md (scan targets, kill conditions, safe-process list), govdocs/SUPPLY_CHAIN_AUDIT.md (dep audit, unsafe inventory), docs/compression_map.md (f0-f80 tokenization). Updated SBOM. Wired aptnomo-test binary to exopack TRIPLE SIMS f61 with 3-pass gate.
 
 **AI Role:** AI (Claude Opus 4.6) wrote all documentation, govdocs, compression map, and wired the exopack TRIPLE SIMS test binary from human direction. Human (GotEmCoach) specified the release-ready checklist, document requirements, and GitHub repo creation.
+
+---
+
+## 2026-03-30 — TOI format fix
+
+**Commit:** `536da5d` — fix TOI: add AI Role field to every entry, add commit hashes
+
+**What:** Added AI Role field to all TIMELINE_OF_INVENTION.md entries. Added commit hashes to each entry. Added second entry for the release-ready docs commit. Established the TOI format: Date, Commit, What, AI Role, Artifacts, Architecture decisions.
+
+**AI Role:** AI (Claude Opus 4.6) updated TOI format from human direction. Human (GotEmCoach) specified the AI Role requirement and provided the role description for the initial scaffold entry.

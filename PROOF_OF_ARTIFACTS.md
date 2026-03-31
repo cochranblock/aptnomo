@@ -72,3 +72,11 @@ strip = true
 | Lines of code | ~370 |
 | Unsafe blocks | 1 (libc::kill for SIGKILL) |
 | Feature gates | 1 (tests → exopack) |
+
+## Commit Log (last 48 hours)
+
+| Hash | Date | Message |
+|------|------|---------|
+| `b020f3c` | 2026-03-30 17:46:38 -0400 | initial commit: 312 KB autonomous APT threat hunter |
+| `e87cff1` | 2026-03-30 17:48:34 -0400 | release-ready: docs, govdocs, compression map, exopack test gate |
+| `536da5d` | 2026-03-30 22:51:22 -0400 | fix TOI: add AI Role field to every entry, add commit hashes |
