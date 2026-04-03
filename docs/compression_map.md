@@ -10,6 +10,7 @@
 | f3 | is_safe_to_kill | main | `fn is_safe_to_kill(t: &Threat) -> bool` |
 | f4 | kill_threat | main | `fn kill_threat(t: &Threat)` |
 | f5 | chrono_now | main | `fn chrono_now() -> String` |
+| f6 | threat_to_card | main | `fn threat_to_card(db: &sled::Db, t: &Threat) -> Result<ThreatCard>` |
 | f10 | persistence | detection | `fn f10_persistence() -> Vec<Threat>` |
 | f20 | network | detection | `fn f20_network() -> Vec<Threat>` |
 | f30 | rootkit | detection | `fn f30_rootkit() -> Vec<Threat>` |
@@ -18,13 +19,34 @@
 | f60 | logs | detection | `fn f60_logs() -> Vec<Threat>` |
 | f70 | cron | detection | `fn f70_cron() -> Vec<Threat>` |
 | f80 | files | detection | `fn f80_files() -> Vec<Threat>` |
+| f90 | gui_main | gui | `fn f90_gui_main() -> Result<()>` |
+| f91 | render_card | gui | `fn f91_render_card(ui, card, drag_offset) -> Response` |
+| f92 | swipe_handler | gui | `fn f92_swipe_handler(response, db, card, ...)` |
+| f93 | baseline_learn | gui | `fn f93_baseline_learn(db, card)` |
+| f94 | stats_screen | gui | `fn f94_stats_screen(ui, db)` |
+| f95 | sled_read | gui | `fn f95_sled_read(&mut self)` |
+| f96 | get | store | `fn f96_get<V>(db, tree, key) -> Result<Option<V>>` |
+| f97 | put | store | `fn f97_put<V>(db, tree, key, value) -> Result<()>` |
+| f98 | apply_theme | gui | `fn f98_apply_theme(ctx: &egui::Context)` |
 
 ## Types
 
 | Token | Name | Fields |
 |-------|------|--------|
-| t0 | Severity | Info, Low, Medium, High, Critical |
-| t1 | Threat | module, severity, description, pid, path, auto_kill |
+| t0 | Severity (internal) | Info, Low, Medium, High, Critical |
+| t1 | Threat (internal) | module, severity, description, pid, path, auto_kill |
+| t10 | ThreatCard | id, timestamp, module, severity, title, description, process_name, pid, file_path, command, status, auto_kill |
+| t11 | BaselinePattern | module, pattern_type, value, learned_at, swipe_count |
+| t12 | CardStatus | Pending, Baselined, Killed, Quarantined, AutoKilled |
+| t13 | PatternType | ProcessName, ListenPort, FilePath, CronPattern, SshKey |
+
+## Shared types
+
+| Token | Name | Variants |
+|-------|------|----------|
+| Module | Module | Persistence, Network, Rootkit, Ssh, Process, Logs, Cron, Files |
+| Severity (GUI) | Severity | Green, Yellow, Orange, Red |
+| Stats | Stats | total_threats, pending, baselined, killed, quarantined, auto_killed |
 
 ## Constants
 
@@ -32,6 +54,14 @@
 |-------|------|-------|
 | k0 | SCAN_INTERVAL | 300s (5 minutes) |
 | k1 | FAST_SCAN | 30s |
+
+## Sled trees
+
+| Tree | Contents |
+|------|----------|
+| threats | Pending ThreatCards |
+| baseline | Learned BaselinePatterns |
+| history | Resolved ThreatCards |
 
 ## Detection module ranges
 
@@ -45,24 +75,3 @@
 | f60 | Logs (tampering detection) |
 | f70 | Cron (suspicious jobs) |
 | f80 | Files (hidden executables in temp dirs) |
-
-## GUI functions (planned)
-
-| Token | Name | Module | Description |
-|-------|------|--------|-------------|
-| f90 | gui_main | gui | egui app entry point |
-| f91 | render_card | gui | Draw a ThreatCard |
-| f92 | swipe_handler | gui | Process swipe gestures |
-| f93 | baseline_learn | gui | Add pattern to baseline |
-| f94 | stats_screen | gui | Render stats/overview |
-| f95 | sled_read | gui | Read threats from sled DB |
-| f96 | sled_write | gui | Write swipe decisions |
-
-## GUI types (planned)
-
-| Token | Name | Fields |
-|-------|------|--------|
-| t10 | ThreatCard | id, timestamp, module, severity, title, description, process_name, pid, file_path, command, status |
-| t11 | BaselinePattern | module, pattern_type, value, learned_at, swipe_count |
-| t12 | CardStatus | Pending, Baselined, Killed, Quarantined, AutoKilled |
-| t13 | PatternType | ProcessName, ListenPort, FilePath, CronPattern, SshKey |

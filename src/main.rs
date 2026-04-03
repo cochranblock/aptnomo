@@ -7,8 +7,12 @@
 use std::time::Duration;
 use std::thread;
 
-/// Threat severity
+use aptnomo::types::{ThreatCard, CardStatus, Module, Severity as GuiSeverity};
+use aptnomo::store;
+
+/// Threat severity (internal — maps to GUI Severity in threat_to_card)
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[allow(dead_code)] // Info/Low reserved for future detection modules
 enum Severity {
     Info,
     Low,
@@ -41,6 +45,18 @@ fn main() {
     let _ = std::fs::create_dir_all("/tmp/aptnomo");
     let _ = std::fs::write("/tmp/aptnomo/pid", std::process::id().to_string());
 
+    // Open sled DB for structured storage (fallback to flat files if it fails)
+    let db = match store::open_db() {
+        Ok(db) => {
+            eprintln!("sled db: {}", store::db_path().display());
+            Some(db)
+        }
+        Err(e) => {
+            eprintln!("warn: sled open failed ({}), using flat files only", e);
+            None
+        }
+    };
+
     // First scan is fast
     let mut interval = FAST_SCAN;
 
@@ -51,10 +67,22 @@ fn main() {
             // Silent when clean — no output
         } else {
             for t in &threats {
-                report(&t);
+                report(t);
+                // Write to sled if available
+                if let Some(ref db) = db {
+                    if let Ok(card) = threat_to_card(db, t) {
+                        let _ = store::write_threat(db, &card);
+                    }
+                }
                 if t.auto_kill && t.severity >= Severity::Critical {
                     if is_safe_to_kill(t) {
                         kill_threat(t);
+                        // Mark as auto-killed in sled
+                        if let Some(ref db) = db {
+                            if let Ok(card) = threat_to_card(db, t) {
+                                let _ = store::resolve_threat(db, card.id, CardStatus::AutoKilled);
+                            }
+                        }
                     }
                 }
             }
@@ -144,6 +172,50 @@ fn chrono_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", d.as_secs())
+}
+
+/// Convert internal Threat to shared ThreatCard for sled storage.
+fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
+    let id = store::next_threat_id(db)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let module = match t.module {
+        "persistence" => Module::Persistence,
+        "network" => Module::Network,
+        "rootkit" => Module::Rootkit,
+        "ssh" => Module::Ssh,
+        "processes" => Module::Process,
+        "logs" => Module::Logs,
+        "cron" => Module::Cron,
+        "files" => Module::Files,
+        _ => Module::Process,
+    };
+
+    let severity = match t.severity {
+        Severity::Info => GuiSeverity::Green,
+        Severity::Low => GuiSeverity::Yellow,
+        Severity::Medium => GuiSeverity::Orange,
+        Severity::High => GuiSeverity::Orange,
+        Severity::Critical => GuiSeverity::Red,
+    };
+
+    Ok(ThreatCard {
+        id,
+        timestamp: now,
+        module,
+        severity,
+        title: t.description.clone(),
+        description: t.description.clone(),
+        process_name: None,
+        pid: t.pid,
+        file_path: t.path.clone(),
+        command: None,
+        status: CardStatus::Pending,
+        auto_kill: t.auto_kill,
+    })
 }
 
 // ── Detection Modules ──────────────────────────────────────

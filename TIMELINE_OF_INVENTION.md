@@ -44,3 +44,35 @@
 **What:** Added AI Role field to all TIMELINE_OF_INVENTION.md entries. Added commit hashes to each entry. Added second entry for the release-ready docs commit. Established the TOI format: Date, Commit, What, AI Role, Artifacts, Architecture decisions.
 
 **AI Role:** AI (Claude Opus 4.6) updated TOI format from human direction. Human (GotEmCoach) specified the AI Role requirement and provided the role description for the initial scaffold entry.
+
+---
+
+## 2026-03-31 — TOI/POA sync
+
+**Commit:** `f0afe25` — sync TOI and POA with all commits from last 48 hours
+
+**What:** Added missing 536da5d entry to TOI with AI Role. Added commit log table to PROOF_OF_ARTIFACTS with all 3 commits, dates, and hashes.
+
+**AI Role:** AI (Claude Opus 4.6) synced documentation from human direction.
+
+---
+
+## 2026-04-02 — Phase 2: sled store + GUI binary
+
+**What:** Full Phase 2 implementation. Added shared types module (ThreatCard, BaselinePattern, CardStatus, Module, Severity), sled database with bincode + zstd compression (6 unit tests), daemon integration (writes threats to sled alongside flat files), and egui "Tinder for Threats" GUI binary with swipe-card interface, stats screen, and baseline learning. Daemon binary grew from 312 KB to ~980 KB (sled/bincode/zstd deps). GUI binary: ~3.5 MB. Version bumped to 0.2.0.
+
+**AI Role:** AI (Claude Opus 4.6) implemented the full Phase 2 from the GUI_DESIGN.md spec: types module, sled store (ported from illbethejudgeofthat pattern), daemon sled integration, egui GUI with card rendering/swipe gestures/stats/theme, and all unit tests. Human (GotEmCoach) directed the phase, approved the plan, and specified IRONHIVE cluster context.
+
+**Artifacts created:**
+- `src/lib.rs` — crate root for shared modules
+- `src/types.rs` — t10-t13 shared types (ThreatCard, BaselinePattern, CardStatus, PatternType)
+- `src/store.rs` — sled DB with bincode + zstd, 6 unit tests
+- `src/bin/aptnomo-gui.rs` — egui swipe-card GUI (f90-f98)
+- `src/main.rs` — modified: sled integration, threat_to_card converter
+
+**Architecture decisions:**
+- Single crate with lib.rs exposing shared modules (no separate -core crate)
+- sled + bincode + zstd pattern ported from illbethejudgeofthat
+- GUI feature-gated behind `gui` feature to keep daemon binary small
+- Daemon keeps flat file output as fallback if sled fails
+- Theme ported from kova's egui pattern with aptnomo severity colors

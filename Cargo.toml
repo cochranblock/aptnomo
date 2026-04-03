@@ -3,7 +3,7 @@
 
 [package]
 name = "aptnomo"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Tiny binary APT threat hunter. Detects Advanced Persistent Threats on bare metal. No cloud, no agent, no bloat."
 license = "Unlicense"
@@ -11,8 +11,13 @@ repository = "https://github.com/cochranblock/aptnomo"
 keywords = ["apt", "threat-hunting", "security", "memory-safe", "tiny-binary"]
 categories = ["command-line-utilities"]
 
+[lib]
+name = "aptnomo"
+path = "src/lib.rs"
+
 [features]
 default = []
+gui = ["dep:eframe"]
 tests = ["exopack"]
 
 [dependencies]
@@ -21,6 +26,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 libc = "0.2"
+sled = "0.34"
+bincode = { version = "2", features = ["serde"] }
+zstd = "0.13"
+eframe = { version = "0.31", optional = true }
 
 [dev-dependencies]
 
@@ -32,6 +41,11 @@ features = ["triple_sims"]
 [[bin]]
 name = "aptnomo"
 path = "src/main.rs"
+
+[[bin]]
+name = "aptnomo-gui"
+path = "src/bin/aptnomo-gui.rs"
+required-features = ["gui"]
 
 [[bin]]
 name = "aptnomo-test"
