@@ -1,4 +1,4 @@
-# Proof of Artifacts — aptnomo
+# Proof of Artifacts — [aptnomo](https://cochranblock.org)
 
 ## Binaries
 
@@ -99,7 +99,7 @@ strip = true
 | Metric | Value |
 |--------|-------|
 | Source files | 6 (lib.rs, types.rs, store.rs, main.rs, aptnomo-gui.rs, aptnomo-test.rs) |
-| Lines of code | ~900 |
+| Lines of code | ~1,200 |
 | Unsafe blocks | 1 in daemon (libc::kill), 2 in GUI (libc::kill, libc::SIGSTOP) |
 | Feature gates | 2 (gui -> eframe, tests -> exopack) |
 | Unit tests | 6 (store: write/read, pending filter, resolve, baseline, stats, id monotonic) |
@@ -112,3 +112,4 @@ strip = true
 | `e87cff1` | 2026-03-30 | release-ready: docs, govdocs, compression map, exopack test gate |
 | `536da5d` | 2026-03-30 | fix TOI: add AI Role field to every entry, add commit hashes |
 | `f0afe25` | 2026-03-31 | sync TOI and POA with all commits from last 48 hours |
+| `8f81f8e` | 2026-04-02 | phase 2: sled store, shared types, egui GUI binary |

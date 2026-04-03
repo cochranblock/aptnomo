@@ -7,7 +7,7 @@ Two binaries. One sled DB. No coupling.
 ```
 ┌─────────────────┐     ┌──────────────┐
 │  aptnomo daemon  │────▶│   sled DB    │◀────│  aptnomo gui  │
-│  312 KB, headless│     │ ~/.aptnomo/  │     │  egui, touch  │
+│  ~980 KB,headless│     │ ~/.aptnomo/  │     │ ~3.5MB, egui  │
 │  scans every 5m  │     │  db/         │     │  swipe cards   │
 └─────────────────┘     └──────────────┘     └──────────────┘
 ```
@@ -224,3 +224,7 @@ False positive rate: 3.2% (decreasing)
 - No dependencies beyond egui, sled, bincode, clap
 - Works offline, air-gapped, on classified networks
 - Daemon and GUI share ZERO code paths at runtime — only the sled schema
+
+---
+
+Unlicense — public domain — [cochranblock.org](https://cochranblock.org)

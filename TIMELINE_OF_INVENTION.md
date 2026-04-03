@@ -1,4 +1,4 @@
-# Timeline of Invention — aptnomo
+# Timeline of Invention — [aptnomo](https://cochranblock.org)
 
 ## 2026-03-30 — Initial scaffold
 
@@ -67,7 +67,7 @@
 - `src/lib.rs` — crate root for shared modules
 - `src/types.rs` — t10-t13 shared types (ThreatCard, BaselinePattern, CardStatus, PatternType)
 - `src/store.rs` — sled DB with bincode + zstd, 6 unit tests
-- `src/bin/aptnomo-gui.rs` — egui swipe-card GUI (f90-f98)
+- `src/bin/aptnomo-gui.rs` — egui swipe-card GUI (f90-f95, f98; f96-f97 in store.rs)
 - `src/main.rs` — modified: sled integration, threat_to_card converter
 
 **Architecture decisions:**

@@ -33,6 +33,10 @@ aptnomo will SIGKILL a process only when ALL of the following are true:
 3. The process PID is > 2
 4. The process is NOT in the safe-process list
 
+The GUI (`aptnomo-gui`) can also kill or quarantine processes via user swipe actions:
+- **Left swipe (Kill):** SIGKILL, same PID > 2 guard
+- **Up swipe (Quarantine):** SIGSTOP, same PID > 2 guard
+
 ### Safe-process list
 
 These processes are NEVER killed, regardless of detection results:
@@ -58,15 +62,34 @@ The safe-process check reads `/proc/[pid]/cmdline` and matches against these nam
 | `/tmp/aptnomo/pid` | PID number | Process management |
 | `/tmp/aptnomo/threats.log` | Threat reports (append) | Audit trail |
 | `/tmp/aptnomo/kills.log` | Kill records (append) | Kill audit trail |
+| `~/.aptnomo/db/` | sled database (bincode + zstd) | Structured threat storage |
+
+### Sled DB trees
+
+| Tree | Contents | Written by |
+|------|----------|------------|
+| `threats` | Pending ThreatCards | Daemon |
+| `baseline` | Learned patterns from user swipes | GUI |
+| `history` | Resolved cards (killed, baselined, quarantined) | GUI |
 
 ## Unsafe code
 
-One `unsafe` block: `libc::kill(pid, SIGKILL)` in `kill_threat()`. Required for sending signals. The PID is validated (> 2, not in safe list) before reaching this code.
+| Location | Code | Justification |
+|----------|------|---------------|
+| `src/main.rs` kill_threat() | `libc::kill(pid, SIGKILL)` | Process termination. PID validated (> 2, not in safe list). |
+| `src/bin/aptnomo-gui.rs` f92 (kill) | `libc::kill(pid, SIGKILL)` | User-initiated kill via left swipe. PID validated (> 2). |
+| `src/bin/aptnomo-gui.rs` f92 (quarantine) | `libc::kill(pid, SIGSTOP)` | User-initiated quarantine via up swipe. PID validated (> 2). |
 
 ## Attack surface
 
 - No network listeners — aptnomo does not bind any ports
 - No config file parsing — no deserialization attacks
-- No user input — runs autonomously
+- No user input — daemon runs autonomously
 - No privilege escalation — runs with whatever permissions it's given
 - Reads only well-known system paths
+- GUI reads only from local sled DB — no network calls
+- Sled DB uses bincode (binary format) — no injection vectors
+
+---
+
+Unlicense — public domain — [cochranblock.org](https://cochranblock.org)
