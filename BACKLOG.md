@@ -2,7 +2,7 @@
 
 Prioritized. Top = most important. Tags: [build] [test] [docs] [feature] [fix] [research]
 
-1. [fix] Auto-kill sled history bug: threat_to_card called twice in kill path generates two different IDs — second resolve_threat call uses an ID never written to threats tree, so auto-killed cards stay Pending forever in GUI. Fix: capture card from first write, reuse its ID in resolve_threat after kill.
+1. ~~[fix] Auto-kill sled history bug: threat_to_card called twice in kill path generates two different IDs — second resolve_threat call uses an ID never written to threats tree, so auto-killed cards stay Pending forever in GUI. Fix: capture card from first write, reuse its ID in resolve_threat after kill.~~ DONE 2026-04-03
 2. [feature] Daemon baseline check: before writing a new ThreatCard, load all_baselines and check for module+value match — skip writing if baselined. Right-swipes currently have zero effect on future daemon scans; the core learn-and-suppress loop is entirely missing from main.rs.
 3. [fix] f50 cmdline signature mismatch: /proc/[pid]/cmdline is NUL-delimited so "nc -e" and "bash -i" (space-containing) will never match the raw string. Join split-on-NUL parts with spaces before matching, or match individual tokens. These two highest-value reverse-shell signatures silently fail on every system.
 4. ~~[feature] Signal handling: catch SIGTERM for graceful sled flush and shutdown~~ DONE 2026-04-03

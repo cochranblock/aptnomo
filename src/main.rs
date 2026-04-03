@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use aptnomo::types::{self, ThreatCard, CardStatus, Module, Severity as GuiSeverity};
+use aptnomo::types::{self, ThreatCard, CardStatus, Severity as GuiSeverity};
 use aptnomo::store;
 
 /// Threat severity (internal — maps to GUI Severity in threat_to_card)
@@ -76,24 +76,27 @@ fn main() {
         } else {
             for t in &threats {
                 report(t);
-                // Write to sled if available and not a duplicate
+                // Write to sled if available and not a duplicate.
+                // Capture the written card's ID so the auto-kill path can
+                // resolve the same card — not a second card with a fresh ID.
+                let mut written_card_id: Option<u64> = None;
                 if let Some(ref db) = db {
                     let module = types::module_from_str(t.module);
                     let is_dup = store::is_duplicate(db, &module, &t.description).unwrap_or(false);
                     if !is_dup {
                         if let Ok(card) = threat_to_card(db, t) {
-                            let _ = store::write_threat(db, &card);
+                            if store::write_threat(db, &card).is_ok() {
+                                written_card_id = Some(card.id);
+                            }
                         }
                     }
                 }
                 if t.auto_kill && t.severity >= Severity::Critical {
                     if is_safe_to_kill(t) {
                         kill_threat(t);
-                        // Mark as auto-killed in sled
-                        if let Some(ref db) = db {
-                            if let Ok(card) = threat_to_card(db, t) {
-                                let _ = store::resolve_threat(db, card.id, CardStatus::AutoKilled);
-                            }
+                        // Resolve the card written above — same ID, moved to history.
+                        if let (Some(db), Some(id)) = (&db, written_card_id) {
+                            let _ = store::resolve_threat(db, id, CardStatus::AutoKilled);
                         }
                     }
                 }
@@ -637,6 +640,181 @@ mod tests {
         for name in &suspicious {
             let matches = suspicious.iter().any(|kw| name.to_lowercase().contains(kw));
             assert!(matches, "suspicious module '{}' should match at least one keyword", name);
+        }
+    }
+
+    // ── Auto-kill sled history bug regression tests ──
+    // Verify the fix: a Critical auto_kill threat written to sled and then killed
+    // must end up in the history tree (AutoKilled), NOT stuck in the threats tree.
+
+    /// Simulate the corrected main-loop logic for a single threat.
+    /// Returns (written_card_id, did_kill_path_run).
+    fn simulate_main_loop_iteration(db: &sled::Db, t: &Threat) -> (Option<u64>, bool) {
+        let mut written_card_id: Option<u64> = None;
+        let module = types::module_from_str(t.module);
+        let is_dup = store::is_duplicate(db, &module, &t.description).unwrap_or(false);
+        if !is_dup {
+            if let Ok(card) = threat_to_card(db, t) {
+                if store::write_threat(db, &card).is_ok() {
+                    written_card_id = Some(card.id);
+                }
+            }
+        }
+        let kill_path_ran = t.auto_kill && t.severity >= Severity::Critical;
+        if kill_path_ran {
+            // is_safe_to_kill check is skipped (no real process to check);
+            // exercise the resolve step directly using the captured ID.
+            if let Some(id) = written_card_id {
+                let _ = store::resolve_threat(db, id, CardStatus::AutoKilled);
+            }
+        }
+        (written_card_id, kill_path_ran)
+    }
+
+    #[test]
+    fn auto_kill_card_moves_to_history_not_pending() {
+        let db = temp_db();
+        let t = make_threat("processes", Severity::Critical, None, true);
+
+        let (id, kill_ran) = simulate_main_loop_iteration(&db, &t);
+
+        assert!(kill_ran, "auto-kill path should have run");
+        assert!(id.is_some(), "card should have been written");
+
+        // Threat must NOT be in the threats (pending) tree
+        let pending = store::pending_threats(&db).unwrap();
+        assert!(pending.is_empty(), "auto-killed card must not remain pending; got: {:?}", pending.iter().map(|c| c.id).collect::<Vec<_>>());
+
+        // Threat MUST be in history as AutoKilled
+        let hist = store::history_cards(&db).unwrap();
+        assert_eq!(hist.len(), 1, "auto-killed card must appear in history exactly once");
+        assert_eq!(hist[0].status, CardStatus::AutoKilled, "history status must be AutoKilled");
+        assert_eq!(hist[0].id, id.unwrap());
+    }
+
+    #[test]
+    fn non_auto_kill_card_stays_pending() {
+        let db = temp_db();
+        // High severity but auto_kill=false — should stay pending, never move to history
+        let t = make_threat("files", Severity::High, None, false);
+
+        let (id, kill_ran) = simulate_main_loop_iteration(&db, &t);
+
+        assert!(!kill_ran, "non-auto-kill threat should not run kill path");
+        assert!(id.is_some());
+
+        let pending = store::pending_threats(&db).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id.unwrap());
+
+        let hist = store::history_cards(&db).unwrap();
+        assert!(hist.is_empty(), "non-auto-kill card must not appear in history");
+    }
+
+    #[test]
+    fn critical_but_not_auto_kill_stays_pending() {
+        let db = temp_db();
+        // Critical severity but auto_kill=false (e.g. rootkit — human review required)
+        let t = make_threat("rootkit", Severity::Critical, None, false);
+
+        let (id, kill_ran) = simulate_main_loop_iteration(&db, &t);
+
+        assert!(!kill_ran);
+        assert!(id.is_some());
+        assert_eq!(store::pending_threats(&db).unwrap().len(), 1);
+        assert!(store::history_cards(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn auto_kill_id_is_same_in_threats_and_history() {
+        // The bug: two different IDs were generated (one for write, one for resolve).
+        // After fix: the ID written to threats and the ID resolved to history are identical.
+        let db = temp_db();
+        let t = make_threat("processes", Severity::Critical, None, true);
+
+        let (written_id, _) = simulate_main_loop_iteration(&db, &t);
+        let written_id = written_id.unwrap();
+
+        let hist = store::history_cards(&db).unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].id, written_id,
+            "history card ID ({}) must match written card ID ({})",
+            hist[0].id, written_id);
+    }
+
+    #[test]
+    fn auto_kill_dedup_skips_while_pending() {
+        // Dedup check only matches threats still in Pending status.
+        // While a card is pending, a second detection of the same threat is skipped.
+        // After it's resolved (killed → history), re-detection is a new event.
+        let db = temp_db();
+
+        // Write a NON-auto-kill threat so it stays pending
+        let mut t = make_threat("processes", Severity::High, None, false);
+        t.description = "unique pending threat".into();
+
+        let (id1, _) = simulate_main_loop_iteration(&db, &t);
+        assert!(id1.is_some(), "first write should succeed");
+
+        // Second iteration: still pending in threats tree → dedup fires → skipped
+        let (id2, _) = simulate_main_loop_iteration(&db, &t);
+        assert!(id2.is_none(), "duplicate of pending card should be skipped");
+
+        // Only one card exists
+        assert_eq!(store::pending_threats(&db).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn auto_kill_re_detection_after_resolve_is_new_event() {
+        // Once a card is resolved (auto-killed → history), re-detection is NOT a dup.
+        // is_duplicate only checks the threats (pending) tree.
+        let db = temp_db();
+        let t = make_threat("processes", Severity::Critical, None, true);
+
+        let (id1, _) = simulate_main_loop_iteration(&db, &t);
+        assert!(id1.is_some());
+
+        // After kill, card moved to history — threats tree is empty
+        assert!(store::pending_threats(&db).unwrap().is_empty());
+
+        // Second detection: not a dup (no pending match) → new card written and killed
+        let (id2, _) = simulate_main_loop_iteration(&db, &t);
+        assert!(id2.is_some(), "re-detection after resolve should write a new card");
+        assert_ne!(id1.unwrap(), id2.unwrap(), "new card must have a different ID");
+
+        // Both kills in history
+        let hist = store::history_cards(&db).unwrap();
+        assert_eq!(hist.len(), 2);
+        assert!(hist.iter().all(|c| c.status == CardStatus::AutoKilled));
+    }
+
+    #[test]
+    fn multiple_auto_kill_threats_all_move_to_history() {
+        let db = temp_db();
+        let modules = ["processes", "processes", "processes"];
+        let descs = ["xmrig miner", "reverse shell", "cryptominer"];
+
+        let mut ids = Vec::new();
+        for (module, desc) in modules.iter().zip(descs.iter()) {
+            let mut t = make_threat(module, Severity::Critical, None, true);
+            t.description = desc.to_string();
+            let (id, _) = simulate_main_loop_iteration(&db, &t);
+            ids.push(id.unwrap());
+        }
+
+        assert!(store::pending_threats(&db).unwrap().is_empty(),
+            "all auto-killed threats must be cleared from pending");
+
+        let hist = store::history_cards(&db).unwrap();
+        assert_eq!(hist.len(), 3, "all 3 auto-killed threats must appear in history");
+        for card in &hist {
+            assert_eq!(card.status, CardStatus::AutoKilled);
+        }
+
+        // All IDs in history match what was written
+        let hist_ids: std::collections::HashSet<u64> = hist.iter().map(|c| c.id).collect();
+        for id in &ids {
+            assert!(hist_ids.contains(id), "written ID {} not found in history", id);
         }
     }
 }
