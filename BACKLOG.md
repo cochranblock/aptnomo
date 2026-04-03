@@ -7,7 +7,7 @@ Prioritized. Top = most important. Tags: [build] [test] [docs] [feature] [fix] [
 3. [feature] Baseline engine (Phase 4): pattern extraction from right-swipes, fuzzy matching, 30-day decay
 4. ~~[feature] Signal handling: catch SIGTERM for graceful sled flush and shutdown~~ DONE 2026-04-03
 5. ~~[fix] GUI swipe animation: drag_offset translates card but current impl doesn't visually shift — wire offset into paint transform~~ DONE 2026-04-03
-6. [feature] Daemon: extract process_name and command fields from /proc/[pid]/cmdline into ThreatCard (currently None)
+6. ~~[feature] Daemon: extract process_name and command fields from /proc/[pid]/cmdline into ThreatCard (currently None)~~ DONE 2026-04-03
 7. [feature] Daemon sled dedup: check if identical threat already pending before writing new card each scan cycle
 8. [test] GUI smoke test: headless eframe test that opens app with temp sled DB, verifies no panic (dep: exopack)
 9. [feature] Log rotation: rotate /tmp/aptnomo/threats.log and kills.log at 10 MB

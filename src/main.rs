@@ -232,6 +232,21 @@ fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
         Severity::Critical => GuiSeverity::Red,
     };
 
+    // Extract process name and command from /proc/[pid]/cmdline
+    let (process_name, command) = if let Some(pid) = t.pid {
+        match std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
+            Ok(raw) => {
+                let parts: Vec<&str> = raw.split('\0').filter(|s| !s.is_empty()).collect();
+                let name = parts.first().and_then(|p| p.rsplit('/').next()).map(String::from);
+                let cmd = if parts.is_empty() { None } else { Some(parts.join(" ")) };
+                (name, cmd)
+            }
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
     Ok(ThreatCard {
         id,
         timestamp: now,
@@ -239,10 +254,10 @@ fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
         severity,
         title: t.description.clone(),
         description: t.description.clone(),
-        process_name: None,
+        process_name,
         pid: t.pid,
         file_path: t.path.clone(),
-        command: None,
+        command,
         status: CardStatus::Pending,
         auto_kill: t.auto_kill,
     })
