@@ -6,9 +6,7 @@
 
 | Crate | Version | License | Purpose | Audit status |
 |-------|---------|---------|---------|--------------|
-| clap | 4.x | MIT/Apache-2.0 | CLI argument parsing | Widely audited, >200M downloads |
 | serde | 1.x | MIT/Apache-2.0 | Serialization framework | Rust ecosystem standard |
-| serde_json | 1.x | MIT/Apache-2.0 | JSON serialization | Same maintainer as serde |
 | anyhow | 1.x | MIT/Apache-2.0 | Error handling | dtolnay (trusted maintainer) |
 | libc | 0.2.x | MIT/Apache-2.0 | POSIX FFI bindings | Rust project official crate |
 | sled | 0.34.x | MIT/Apache-2.0 | Embedded key-value database | spacejam (trusted), widely used |
@@ -24,14 +22,14 @@
 
 ### Transitive dependency analysis
 
-All direct deps are maintained by trusted Rust ecosystem authors (dtolnay, clap-rs team, rust-lang, spacejam, emilk). No dependencies from unknown or single-maintainer crates in the critical path. eframe brings in egui ecosystem (emilk, trusted) and platform windowing (winit, glutin).
+All direct deps are maintained by trusted Rust ecosystem authors (dtolnay, rust-lang, spacejam, emilk). No dependencies from unknown or single-maintainer crates in the critical path. eframe brings in egui ecosystem (emilk, trusted) and platform windowing (winit, glutin).
 
 ## Build safety
 
 | Check | Status |
 |-------|--------|
 | No build scripts (build.rs) | Confirmed — no build.rs |
-| No proc macros from unknown sources | clap/serde/bincode derive macros only |
+| No proc macros from unknown sources | serde/bincode derive macros only |
 | No network access at build time | Confirmed |
 | No code generation from external files | Confirmed |
 | `panic = "abort"` in release | Yes — no unwinding attack surface |

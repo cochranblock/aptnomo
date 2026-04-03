@@ -12,7 +12,7 @@
 |--------|-------|
 | Language | Rust (edition 2024) |
 | Target | x86_64-unknown-linux-gnu / aarch64-apple-darwin |
-| Dependencies (daemon) | 8 (clap, serde, serde_json, anyhow, libc, sled, bincode, zstd) |
+| Dependencies (daemon) | 6 (serde, anyhow, libc, sled, bincode, zstd) |
 | Dependencies (GUI) | +1 (eframe, optional) |
 | External services | 0 — no network, no cloud |
 | Config files | 0 — zero config |

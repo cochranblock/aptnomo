@@ -6,9 +6,7 @@ Software Bill of Materials. Generated from Cargo.toml.
 
 | Crate | Version | License | Feature flags |
 |-------|---------|---------|---------------|
-| clap | 4.x | MIT/Apache-2.0 | derive |
 | serde | 1.x | MIT/Apache-2.0 | derive |
-| serde_json | 1.x | MIT/Apache-2.0 | — |
 | anyhow | 1.x | MIT/Apache-2.0 | — |
 | libc | 0.2.x | MIT/Apache-2.0 | — |
 | sled | 0.34.x | MIT/Apache-2.0 | — |
