@@ -169,20 +169,37 @@ fn f91_render_card(ui: &mut egui::Ui, card: &ThreatCard, drag_offset: f32) -> eg
 
     ui.add_space(20.0);
 
-    // Allocate drag area for the entire card
     let available = ui.available_width();
     let card_width = available.min(380.0);
+    let offset = drag_offset.clamp(-250.0, 250.0);
 
-    // Offset for swipe animation
-    let offset = drag_offset.clamp(-200.0, 200.0);
+    // Swipe direction hint: tint the background
+    if offset.abs() > 30.0 {
+        let alpha = ((offset.abs() - 30.0) / 100.0).min(0.3);
+        let hint_color = if offset > 0.0 {
+            // Right = baseline (green)
+            egui::Color32::from_rgba_unmultiplied(0x50, 0xb4, 0x32, (alpha * 255.0) as u8)
+        } else {
+            // Left = kill (red)
+            egui::Color32::from_rgba_unmultiplied(0xc8, 0x32, 0x32, (alpha * 255.0) as u8)
+        };
+        let rect = ui.available_rect_before_wrap();
+        ui.painter().rect_filled(rect, 0.0, hint_color);
+    }
 
-    let fr = frame.show(ui, |ui| {
-        ui.set_min_width(card_width);
-        ui.set_max_width(card_width);
+    // Horizontal offset via indented layout
+    let margin = offset.max(0.0);
+    if margin > 0.0 {
+        ui.add_space(0.0); // no-op spacer for layout
+    }
 
-        if offset.abs() > 0.1 {
-            ui.add_space(0.0); // force layout
+    let fr = ui.horizontal(|ui| {
+        if margin > 0.0 {
+            ui.add_space(margin);
         }
+        frame.show(ui, |ui| {
+            ui.set_min_width((card_width - offset.abs()).max(200.0));
+            ui.set_max_width(card_width);
 
         // Severity badge
         let sev_text = format!("{:?}", card.severity).to_uppercase();
@@ -223,9 +240,10 @@ fn f91_render_card(ui: &mut egui::Ui, card: &ThreatCard, drag_offset: f32) -> eg
             ui.label(egui::RichText::new("AUTO-KILLED")
                 .color(egui::Color32::from_rgb(0xc8, 0x32, 0x32)).size(14.0).strong());
         }
+        }).response
     });
 
-    // Make the frame response draggable
+    // Make the horizontal wrapper response draggable
     fr.response.interact(egui::Sense::drag())
 }
 
