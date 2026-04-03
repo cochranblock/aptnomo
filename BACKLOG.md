@@ -3,7 +3,7 @@
 Prioritized. Top = most important. Tags: [build] [test] [docs] [feature] [fix] [research]
 
 1. ~~[fix] Remove unused deps: clap, serde_json not used in any source file — dead weight in binary~~ DONE 2026-04-03
-2. [test] Add integration test: seed sled DB with ThreatCards, verify daemon reads back correctly
+2. ~~[test] Add integration test: seed sled DB with ThreatCards, verify daemon reads back correctly~~ DONE 2026-04-03
 3. [feature] Baseline engine (Phase 4): pattern extraction from right-swipes, fuzzy matching, 30-day decay
 4. [feature] Signal handling: catch SIGTERM for graceful sled flush and shutdown
 5. [fix] GUI swipe animation: drag_offset translates card but current impl doesn't visually shift — wire offset into paint transform

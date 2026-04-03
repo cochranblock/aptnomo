@@ -102,7 +102,7 @@ strip = true
 | Lines of code | ~1,200 |
 | Unsafe blocks | 1 in daemon (libc::kill), 2 in GUI (libc::kill, libc::SIGSTOP) |
 | Feature gates | 2 (gui -> eframe, tests -> exopack) |
-| Unit tests | 6 (store: write/read, pending filter, resolve, baseline, stats, id monotonic) |
+| Unit tests | 10 (store: 6 unit + 4 integration — full lifecycle, cross-tree, baseline dedup, resolve noop) |
 
 ## P23: Triple Lens
 

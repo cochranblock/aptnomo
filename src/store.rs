@@ -248,4 +248,134 @@ mod tests {
         let b = next_threat_id(&db).unwrap();
         assert!(b > a);
     }
+
+    // ── Integration tests ──
+
+    fn card_for_module(id: u64, module: Module, severity: Severity) -> ThreatCard {
+        ThreatCard {
+            id,
+            timestamp: 1700000000 + id,
+            module,
+            severity,
+            title: format!("threat from {:?}", module),
+            description: format!("test threat id={} module={:?} sev={:?}", id, module, severity),
+            process_name: if module == Module::Process { Some("evil".into()) } else { None },
+            pid: if module == Module::Process { Some(9999) } else { None },
+            file_path: if module == Module::Files { Some("/tmp/.hidden".into()) } else { None },
+            command: None,
+            status: CardStatus::Pending,
+            auto_kill: severity == Severity::Red && module == Module::Process,
+        }
+    }
+
+    #[test]
+    fn full_lifecycle_all_modules() {
+        let db = temp_db();
+
+        // Seed one card per module at varying severities
+        let cards = vec![
+            card_for_module(1, Module::Persistence, Severity::Orange),
+            card_for_module(2, Module::Network, Severity::Yellow),
+            card_for_module(3, Module::Rootkit, Severity::Red),
+            card_for_module(4, Module::Ssh, Severity::Yellow),
+            card_for_module(5, Module::Process, Severity::Red),
+            card_for_module(6, Module::Logs, Severity::Orange),
+            card_for_module(7, Module::Cron, Severity::Orange),
+            card_for_module(8, Module::Files, Severity::Red),
+        ];
+
+        for c in &cards {
+            write_threat(&db, c).unwrap();
+        }
+
+        // All 8 should be pending
+        let pending = pending_threats(&db).unwrap();
+        assert_eq!(pending.len(), 8);
+
+        // Resolve each with a different status
+        resolve_threat(&db, 1, CardStatus::Baselined).unwrap();
+        resolve_threat(&db, 2, CardStatus::Baselined).unwrap();
+        resolve_threat(&db, 3, CardStatus::AutoKilled).unwrap();
+        resolve_threat(&db, 4, CardStatus::Baselined).unwrap();
+        resolve_threat(&db, 5, CardStatus::Killed).unwrap();
+        resolve_threat(&db, 6, CardStatus::Quarantined).unwrap();
+        resolve_threat(&db, 7, CardStatus::Baselined).unwrap();
+        // 8 stays pending
+
+        // Verify pending count
+        let pending = pending_threats(&db).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, 8);
+
+        // Verify history
+        let hist = history_cards(&db).unwrap();
+        assert_eq!(hist.len(), 7);
+
+        // Verify stats
+        let s = stats(&db).unwrap();
+        assert_eq!(s.total_threats, 8);
+        assert_eq!(s.pending, 1);
+        assert_eq!(s.baselined, 4);
+        assert_eq!(s.killed, 1);
+        assert_eq!(s.quarantined, 1);
+        assert_eq!(s.auto_killed, 1);
+    }
+
+    #[test]
+    fn cross_tree_consistency() {
+        let db = temp_db();
+
+        // Write, resolve, verify card is NOT in threats tree and IS in history
+        let card = sample_card(1);
+        write_threat(&db, &card).unwrap();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 1);
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 0);
+
+        resolve_threat(&db, 1, CardStatus::Killed).unwrap();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 0);
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 1);
+
+        // History card has updated status
+        let hist = history_cards(&db).unwrap();
+        assert_eq!(hist[0].status, CardStatus::Killed);
+        // Original fields preserved
+        assert_eq!(hist[0].title, "xmrig cryptominer");
+        assert_eq!(hist[0].pid, Some(42));
+    }
+
+    #[test]
+    fn baseline_dedup_by_key() {
+        let db = temp_db();
+
+        // Same module+value should overwrite, not duplicate
+        let p1 = BaselinePattern {
+            module: Module::Network,
+            pattern_type: PatternType::ListenPort,
+            value: "8443".into(),
+            learned_at: 1000,
+            swipe_count: 1,
+        };
+        let p2 = BaselinePattern {
+            module: Module::Network,
+            pattern_type: PatternType::ListenPort,
+            value: "8443".into(),
+            learned_at: 2000,
+            swipe_count: 2,
+        };
+        add_baseline(&db, &p1).unwrap();
+        add_baseline(&db, &p2).unwrap();
+
+        let all = all_baselines(&db).unwrap();
+        assert_eq!(all.len(), 1); // key is module:value, so second overwrites first
+        assert_eq!(all[0].swipe_count, 2);
+        assert_eq!(all[0].learned_at, 2000);
+    }
+
+    #[test]
+    fn resolve_nonexistent_is_noop() {
+        let db = temp_db();
+        // Resolving an ID that doesn't exist should not panic or error
+        resolve_threat(&db, 9999, CardStatus::Killed).unwrap();
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 0);
+    }
 }
