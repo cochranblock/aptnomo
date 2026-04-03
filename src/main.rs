@@ -76,10 +76,14 @@ fn main() {
         } else {
             for t in &threats {
                 report(t);
-                // Write to sled if available
+                // Write to sled if available and not a duplicate
                 if let Some(ref db) = db {
-                    if let Ok(card) = threat_to_card(db, t) {
-                        let _ = store::write_threat(db, &card);
+                    let module = module_from_str(t.module);
+                    let is_dup = store::is_duplicate(db, &module, &t.description).unwrap_or(false);
+                    if !is_dup {
+                        if let Ok(card) = threat_to_card(db, t) {
+                            let _ = store::write_threat(db, &card);
+                        }
                     }
                 }
                 if t.auto_kill && t.severity >= Severity::Critical {
@@ -204,15 +208,9 @@ fn chrono_now() -> String {
     format!("{}", d.as_secs())
 }
 
-/// Convert internal Threat to shared ThreatCard for sled storage.
-fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
-    let id = store::next_threat_id(db)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let module = match t.module {
+/// Map internal module string to shared Module enum.
+fn module_from_str(s: &str) -> Module {
+    match s {
         "persistence" => Module::Persistence,
         "network" => Module::Network,
         "rootkit" => Module::Rootkit,
@@ -222,7 +220,18 @@ fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
         "cron" => Module::Cron,
         "files" => Module::Files,
         _ => Module::Process,
-    };
+    }
+}
+
+/// Convert internal Threat to shared ThreatCard for sled storage.
+fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
+    let id = store::next_threat_id(db)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let module = module_from_str(t.module);
 
     let severity = match t.severity {
         Severity::Info => GuiSeverity::Green,

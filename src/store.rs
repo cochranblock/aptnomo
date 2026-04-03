@@ -95,6 +95,20 @@ pub fn pending_threats(db: &sled::Db) -> anyhow::Result<Vec<ThreatCard>> {
         .collect())
 }
 
+/// Check if a threat with the same module and description is already pending.
+pub fn is_duplicate(db: &sled::Db, module: &Module, description: &str) -> anyhow::Result<bool> {
+    let tree = db.open_tree(TREE_THREATS)?;
+    for item in tree.iter() {
+        let (_, val_bytes) = item?;
+        let decompressed = zstd::decode_all(val_bytes.as_ref())?;
+        let (card, _): (ThreatCard, _) = bincode::serde::decode_from_slice(&decompressed, bincode::config::standard())?;
+        if card.status == CardStatus::Pending && &card.module == module && card.description == description {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 // ── Typed helpers: GUI ──
 
 /// Move a threat from the threats tree to history with a new status.
@@ -369,6 +383,17 @@ mod tests {
         assert_eq!(all.len(), 1); // key is module:value, so second overwrites first
         assert_eq!(all[0].swipe_count, 2);
         assert_eq!(all[0].learned_at, 2000);
+    }
+
+    #[test]
+    fn is_duplicate_detects_same_threat() {
+        let db = temp_db();
+        let card = sample_card(1);
+        write_threat(&db, &card).unwrap();
+
+        assert!(is_duplicate(&db, &Module::Process, "suspicious process: xmrig --donate-level 1").unwrap());
+        assert!(!is_duplicate(&db, &Module::Process, "different threat").unwrap());
+        assert!(!is_duplicate(&db, &Module::Network, "suspicious process: xmrig --donate-level 1").unwrap());
     }
 
     #[test]
