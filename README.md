@@ -164,6 +164,14 @@ Unit tests for the sled store:
 cargo test
 ```
 
+## P23: Triple Lens
+
+All aptnomo work is evaluated through the Triple Lens — the [cochranblock](https://cochranblock.org) quality gate:
+
+- **Lens 1 (Technical):** Does it compile, pass tests, and run on real hardware? (6 store unit tests, TRIPLE SIMS 3/3, daemon + GUI both build clean)
+- **Lens 2 (Product):** Does it solve a real problem? (Autonomous APT detection on bare metal — zero config, zero cloud, zero telemetry. Drop and run.)
+- **Lens 3 (Honest):** Are the claims verifiable? (Every detection module reads real system paths. Binary sizes measured from `ls -la`. SBOM and supply chain audit in govdocs/. Every commit hash in TIMELINE_OF_INVENTION.md.)
+
 ## License
 
 Unlicense — public domain. [cochranblock.org](https://cochranblock.org)

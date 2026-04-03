@@ -104,6 +104,14 @@ strip = true
 | Feature gates | 2 (gui -> eframe, tests -> exopack) |
 | Unit tests | 6 (store: write/read, pending filter, resolve, baseline, stats, id monotonic) |
 
+## P23: Triple Lens
+
+| Lens | Question | aptnomo Answer |
+|------|----------|----------------|
+| **Technical** | Compile, test, run on real hardware? | 6 store unit tests pass. TRIPLE SIMS 3/3. Daemon + GUI build clean. Release profile: LTO, strip, panic=abort. |
+| **Product** | Solve a real problem? | Autonomous APT detection on bare metal. Zero config, zero cloud, zero telemetry. 8 detection modules covering persistence, network, rootkit, SSH, processes, logs, cron, files. |
+| **Honest** | Claims verifiable? | Binary sizes from `ls -la`. Every detection module reads real `/proc` and `/etc` paths. SBOM and supply chain audit in `govdocs/`. Every commit hash in `TIMELINE_OF_INVENTION.md`. |
+
 ## Commit Log
 
 | Hash | Date | Message |
