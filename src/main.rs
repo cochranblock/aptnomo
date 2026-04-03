@@ -158,7 +158,8 @@ fn report(t: &Threat) {
     );
     eprintln!("{}", msg);
 
-    // Append to report file
+    // Append to report file (rotate at 10 MB)
+    rotate_if_needed("/tmp/aptnomo/threats.log");
     let _ = std::fs::OpenOptions::new()
         .create(true).append(true)
         .open("/tmp/aptnomo/threats.log")
@@ -190,6 +191,7 @@ fn kill_threat(t: &Threat) {
     if let Some(pid) = t.pid {
         eprintln!("[aptnomo] KILLING pid {} — {}", pid, t.description);
         unsafe { libc::kill(pid as i32, libc::SIGKILL); }
+        rotate_if_needed("/tmp/aptnomo/kills.log");
         let _ = std::fs::OpenOptions::new()
             .create(true).append(true)
             .open("/tmp/aptnomo/kills.log")
@@ -201,11 +203,22 @@ fn kill_threat(t: &Threat) {
 }
 
 fn chrono_now() -> String {
-    // Simple timestamp without chrono dep
     let d = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", d.as_secs())
+}
+
+/// Rotate a log file if it exceeds 10 MB. Renames to .old (overwrites previous .old).
+const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+fn rotate_if_needed(path: &str) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > LOG_MAX_BYTES {
+            let old = format!("{}.old", path);
+            let _ = std::fs::rename(path, &old);
+        }
+    }
 }
 
 /// Map internal module string to shared Module enum.

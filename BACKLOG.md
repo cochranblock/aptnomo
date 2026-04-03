@@ -10,7 +10,7 @@ Prioritized. Top = most important. Tags: [build] [test] [docs] [feature] [fix] [
 6. ~~[feature] Daemon: extract process_name and command fields from /proc/[pid]/cmdline into ThreatCard (currently None)~~ DONE 2026-04-03
 7. ~~[feature] Daemon sled dedup: check if identical threat already pending before writing new card each scan cycle~~ DONE 2026-04-03
 8. [test] GUI smoke test: headless eframe test that opens app with temp sled DB, verifies no panic (dep: exopack)
-9. [feature] Log rotation: rotate /tmp/aptnomo/threats.log and kills.log at 10 MB
+9. ~~[feature] Log rotation: rotate /tmp/aptnomo/threats.log and kills.log at 10 MB~~ DONE 2026-04-03
 10. [feature] macOS detection stubs: platform-gated modules that scan launchd plists, lsof, kextstat instead of /proc
 11. ~~[fix] Daemon: threat_to_card generates new ID per scan cycle for same threat — needs stable ID or dedup key~~ DONE 2026-04-03 (resolved by item #7 dedup)
 12. [feature] CLI args via clap: --once (single scan, exit), --json (structured output), --db-path (custom sled location)
