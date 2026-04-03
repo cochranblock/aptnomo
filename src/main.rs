@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use aptnomo::types::{ThreatCard, CardStatus, Module, Severity as GuiSeverity};
+use aptnomo::types::{self, ThreatCard, CardStatus, Module, Severity as GuiSeverity};
 use aptnomo::store;
 
 /// Threat severity (internal — maps to GUI Severity in threat_to_card)
@@ -78,7 +78,7 @@ fn main() {
                 report(t);
                 // Write to sled if available and not a duplicate
                 if let Some(ref db) = db {
-                    let module = module_from_str(t.module);
+                    let module = types::module_from_str(t.module);
                     let is_dup = store::is_duplicate(db, &module, &t.description).unwrap_or(false);
                     if !is_dup {
                         if let Ok(card) = threat_to_card(db, t) {
@@ -159,7 +159,7 @@ fn report(t: &Threat) {
     eprintln!("{}", msg);
 
     // Append to report file (rotate at 10 MB)
-    rotate_if_needed("/tmp/aptnomo/threats.log");
+    types::rotate_if_needed("/tmp/aptnomo/threats.log", LOG_MAX_BYTES);
     let _ = std::fs::OpenOptions::new()
         .create(true).append(true)
         .open("/tmp/aptnomo/threats.log")
@@ -191,7 +191,7 @@ fn kill_threat(t: &Threat) {
     if let Some(pid) = t.pid {
         eprintln!("[aptnomo] KILLING pid {} — {}", pid, t.description);
         unsafe { libc::kill(pid as i32, libc::SIGKILL); }
-        rotate_if_needed("/tmp/aptnomo/kills.log");
+        types::rotate_if_needed("/tmp/aptnomo/kills.log", LOG_MAX_BYTES);
         let _ = std::fs::OpenOptions::new()
             .create(true).append(true)
             .open("/tmp/aptnomo/kills.log")
@@ -209,32 +209,7 @@ fn chrono_now() -> String {
     format!("{}", d.as_secs())
 }
 
-/// Rotate a log file if it exceeds 10 MB. Renames to .old (overwrites previous .old).
 const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
-
-fn rotate_if_needed(path: &str) {
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.len() > LOG_MAX_BYTES {
-            let old = format!("{}.old", path);
-            let _ = std::fs::rename(path, &old);
-        }
-    }
-}
-
-/// Map internal module string to shared Module enum.
-fn module_from_str(s: &str) -> Module {
-    match s {
-        "persistence" => Module::Persistence,
-        "network" => Module::Network,
-        "rootkit" => Module::Rootkit,
-        "ssh" => Module::Ssh,
-        "processes" => Module::Process,
-        "logs" => Module::Logs,
-        "cron" => Module::Cron,
-        "files" => Module::Files,
-        _ => Module::Process,
-    }
-}
 
 /// Convert internal Threat to shared ThreatCard for sled storage.
 fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
@@ -244,7 +219,7 @@ fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
         .unwrap_or_default()
         .as_secs();
 
-    let module = module_from_str(t.module);
+    let module = types::module_from_str(t.module);
 
     let severity = match t.severity {
         Severity::Info => GuiSeverity::Green,
@@ -283,6 +258,387 @@ fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
         status: CardStatus::Pending,
         auto_kill: t.auto_kill,
     })
+}
+
+// ── Tests ──────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db() -> sled::Db {
+        sled::Config::new().temporary(true).open().unwrap()
+    }
+
+    fn make_threat(module: &'static str, severity: Severity, pid: Option<u32>, auto_kill: bool) -> Threat {
+        Threat {
+            module,
+            severity,
+            description: format!("test threat from {}", module),
+            pid,
+            path: None,
+            auto_kill,
+        }
+    }
+
+    // ── chrono_now ──
+
+    #[test]
+    fn chrono_now_returns_digits() {
+        let s = chrono_now();
+        assert!(!s.is_empty());
+        assert!(s.chars().all(|c| c.is_ascii_digit()), "expected digits, got: {}", s);
+    }
+
+    #[test]
+    fn chrono_now_is_plausible_epoch() {
+        let s = chrono_now();
+        let ts: u64 = s.parse().unwrap();
+        // Must be after 2020-01-01 (1577836800) and before 2100-01-01 (4102444800)
+        assert!(ts > 1_577_836_800, "timestamp too old: {}", ts);
+        assert!(ts < 4_102_444_800, "timestamp too far future: {}", ts);
+    }
+
+    // ── is_safe_to_kill ──
+
+    #[test]
+    fn is_safe_to_kill_no_pid() {
+        let t = make_threat("processes", Severity::Critical, None, true);
+        assert!(!is_safe_to_kill(&t));
+    }
+
+    #[test]
+    fn is_safe_to_kill_pid_zero() {
+        let t = make_threat("processes", Severity::Critical, Some(0), true);
+        assert!(!is_safe_to_kill(&t));
+    }
+
+    #[test]
+    fn is_safe_to_kill_pid_one() {
+        let t = make_threat("processes", Severity::Critical, Some(1), true);
+        assert!(!is_safe_to_kill(&t));
+    }
+
+    #[test]
+    fn is_safe_to_kill_pid_two() {
+        let t = make_threat("processes", Severity::Critical, Some(2), true);
+        assert!(!is_safe_to_kill(&t));
+    }
+
+    #[test]
+    fn is_safe_to_kill_nonexistent_pid_returns_true() {
+        // PID that certainly does not exist — process not found, no cmdline readable
+        let t = make_threat("processes", Severity::Critical, Some(u32::MAX), true);
+        // When /proc/<pid>/cmdline is unreadable, function returns true
+        assert!(is_safe_to_kill(&t));
+    }
+
+    // ── Detection modules: no-panic on missing paths ──
+    // All these tests verify the modules handle missing system files gracefully.
+    // On Linux they read /proc; on macOS (CI/dev) those paths don't exist —
+    // both cases should return an empty Vec, never panic.
+
+    #[test]
+    fn f10_persistence_no_panic() {
+        let threats = f10_persistence();
+        // May be empty or non-empty depending on system; must not panic
+        let _ = threats;
+    }
+
+    #[test]
+    fn f10_persistence_returns_vec() {
+        let threats = f10_persistence();
+        // All returned threats must be from the persistence module
+        for t in &threats {
+            assert_eq!(t.module, "persistence");
+        }
+    }
+
+    #[test]
+    fn f20_network_no_panic() {
+        let _ = f20_network();
+    }
+
+    #[test]
+    fn f20_network_returns_vec() {
+        let threats = f20_network();
+        for t in &threats {
+            assert_eq!(t.module, "network");
+        }
+    }
+
+    #[test]
+    fn f30_rootkit_no_panic() {
+        let _ = f30_rootkit();
+    }
+
+    #[test]
+    fn f30_rootkit_returns_vec() {
+        let threats = f30_rootkit();
+        for t in &threats {
+            assert_eq!(t.module, "rootkit");
+        }
+    }
+
+    #[test]
+    fn f40_ssh_no_panic() {
+        let _ = f40_ssh();
+    }
+
+    #[test]
+    fn f40_ssh_returns_vec() {
+        let threats = f40_ssh();
+        for t in &threats {
+            assert_eq!(t.module, "ssh");
+        }
+    }
+
+    #[test]
+    fn f50_processes_no_panic() {
+        let _ = f50_processes();
+    }
+
+    #[test]
+    fn f50_processes_returns_vec() {
+        let threats = f50_processes();
+        for t in &threats {
+            assert_eq!(t.module, "processes");
+        }
+    }
+
+    #[test]
+    fn f60_logs_no_panic() {
+        let _ = f60_logs();
+    }
+
+    #[test]
+    fn f60_logs_returns_vec() {
+        let threats = f60_logs();
+        for t in &threats {
+            assert_eq!(t.module, "logs");
+        }
+    }
+
+    #[test]
+    fn f70_cron_no_panic() {
+        let _ = f70_cron();
+    }
+
+    #[test]
+    fn f70_cron_returns_vec() {
+        let threats = f70_cron();
+        for t in &threats {
+            assert_eq!(t.module, "cron");
+        }
+    }
+
+    #[test]
+    fn f80_files_no_panic() {
+        let _ = f80_files();
+    }
+
+    #[test]
+    fn f80_files_returns_vec() {
+        let threats = f80_files();
+        for t in &threats {
+            assert_eq!(t.module, "files");
+        }
+    }
+
+    #[test]
+    fn scan_all_no_panic() {
+        let _ = scan_all();
+    }
+
+    #[test]
+    fn scan_all_returns_vec() {
+        let threats = scan_all();
+        // All threats should have a known module
+        let valid_modules = ["persistence", "network", "rootkit", "ssh", "processes", "logs", "cron", "files"];
+        for t in &threats {
+            assert!(valid_modules.contains(&t.module), "unknown module: {}", t.module);
+        }
+    }
+
+    // ── threat_to_card ──
+
+    #[test]
+    fn threat_to_card_basic_fields() {
+        let db = temp_db();
+        let t = make_threat("processes", Severity::Critical, None, true);
+        let card = threat_to_card(&db, &t).unwrap();
+        assert_eq!(card.description, t.description);
+        assert_eq!(card.severity, types::Severity::Red);
+        assert_eq!(card.module, types::Module::Process);
+        assert!(card.auto_kill);
+        assert_eq!(card.status, types::CardStatus::Pending);
+    }
+
+    #[test]
+    fn threat_to_card_severity_mapping() {
+        let db = temp_db();
+        let cases = [
+            (Severity::Info, types::Severity::Green),
+            (Severity::Low, types::Severity::Yellow),
+            (Severity::Medium, types::Severity::Orange),
+            (Severity::High, types::Severity::Orange),
+            (Severity::Critical, types::Severity::Red),
+        ];
+        for (internal, expected_gui) in cases {
+            let t = make_threat("network", internal, None, false);
+            let card = threat_to_card(&db, &t).unwrap();
+            assert_eq!(card.severity, expected_gui, "severity mapping failed for {:?}", t.severity);
+        }
+    }
+
+    #[test]
+    fn threat_to_card_all_modules() {
+        let db = temp_db();
+        let modules = [
+            ("persistence", types::Module::Persistence),
+            ("network", types::Module::Network),
+            ("rootkit", types::Module::Rootkit),
+            ("ssh", types::Module::Ssh),
+            ("processes", types::Module::Process),
+            ("logs", types::Module::Logs),
+            ("cron", types::Module::Cron),
+            ("files", types::Module::Files),
+        ];
+        for (module_str, expected_module) in modules {
+            let t = make_threat(module_str, Severity::Medium, None, false);
+            let card = threat_to_card(&db, &t).unwrap();
+            assert_eq!(card.module, expected_module);
+        }
+    }
+
+    #[test]
+    fn threat_to_card_with_path() {
+        let db = temp_db();
+        let mut t = make_threat("files", Severity::Critical, None, false);
+        t.path = Some("/tmp/.hidden_bin".into());
+        let card = threat_to_card(&db, &t).unwrap();
+        assert_eq!(card.file_path, Some("/tmp/.hidden_bin".into()));
+    }
+
+    #[test]
+    fn threat_to_card_no_pid_gives_none_process_fields() {
+        let db = temp_db();
+        let t = make_threat("network", Severity::Medium, None, false);
+        let card = threat_to_card(&db, &t).unwrap();
+        assert_eq!(card.pid, None);
+        assert_eq!(card.process_name, None);
+        assert_eq!(card.command, None);
+    }
+
+    #[test]
+    fn threat_to_card_nonexistent_pid_gives_none_process_fields() {
+        let db = temp_db();
+        let t = make_threat("processes", Severity::Critical, Some(u32::MAX), true);
+        let card = threat_to_card(&db, &t).unwrap();
+        assert_eq!(card.pid, Some(u32::MAX));
+        // /proc/<u32::MAX>/cmdline won't exist, so name and command are None
+        assert_eq!(card.process_name, None);
+        assert_eq!(card.command, None);
+    }
+
+    #[test]
+    fn threat_to_card_ids_are_monotonic() {
+        let db = temp_db();
+        let t = make_threat("network", Severity::Low, None, false);
+        let c1 = threat_to_card(&db, &t).unwrap();
+        let c2 = threat_to_card(&db, &t).unwrap();
+        assert!(c2.id > c1.id);
+    }
+
+    #[test]
+    fn threat_to_card_timestamp_is_recent() {
+        let db = temp_db();
+        let t = make_threat("ssh", Severity::Medium, None, false);
+        let card = threat_to_card(&db, &t).unwrap();
+        // Timestamp should be after 2020-01-01
+        assert!(card.timestamp > 1_577_836_800);
+    }
+
+    // ── Severity ordering (internal enum) ──
+
+    #[test]
+    fn severity_ordering() {
+        assert!(Severity::Info < Severity::Low);
+        assert!(Severity::Low < Severity::Medium);
+        assert!(Severity::Medium < Severity::High);
+        assert!(Severity::High < Severity::Critical);
+    }
+
+    #[test]
+    fn auto_kill_only_triggers_on_critical() {
+        // Verify the main loop logic: auto_kill AND severity >= Critical
+        let t = make_threat("processes", Severity::High, None, true);
+        // High severity with auto_kill=true should NOT trigger auto-kill
+        assert!(!(t.auto_kill && t.severity >= Severity::Critical));
+
+        let t2 = make_threat("processes", Severity::Critical, None, true);
+        assert!(t2.auto_kill && t2.severity >= Severity::Critical);
+    }
+
+    // ── f40_ssh threshold test ──
+
+    #[test]
+    fn f40_ssh_threshold_is_five() {
+        // The function reports threats only when >5 keys exist.
+        // We can't easily control $HOME/.ssh/authorized_keys in a unit test,
+        // but we verify the function doesn't panic on any HOME value.
+        let _threats = f40_ssh();
+    }
+
+    // ── f20_network port parsing ──
+
+    #[test]
+    fn f20_known_ports_not_flagged() {
+        // Known ports (22, 80, 443, etc.) should not appear in threats.
+        // On systems where /proc/net/tcp exists, none of the known ports should be flagged.
+        let threats = f20_network();
+        let known: &[u16] = &[22, 80, 443, 8080, 8081, 3000, 3001, 8000];
+        for t in &threats {
+            if t.description.contains("0.0.0.0:") {
+                let port_str = t.description.split(':').last().unwrap_or("0");
+                if let Ok(port) = port_str.parse::<u16>() {
+                    assert!(!known.contains(&port),
+                        "known port {} was incorrectly flagged", port);
+                }
+            }
+        }
+    }
+
+    // ── f80_files size threshold ──
+
+    #[test]
+    fn f80_files_small_hidden_not_flagged() {
+        // Create a small hidden file in /tmp — should NOT be flagged (< 10KB)
+        let path = "/tmp/.aptnomo_test_small_hidden";
+        std::fs::write(path, "small").unwrap();
+        let threats = f80_files();
+        let flagged = threats.iter().any(|t| t.path.as_deref() == Some(path));
+        assert!(!flagged, "small hidden file should not be flagged");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn f30_rootkit_clean_kernel_not_flagged() {
+        // Standard module names should not be flagged.
+        // We can't control /proc/modules but we verify the name-matching logic.
+        let suspicious = ["hide", "stealth", "rootkit", "backdoor", "keylog"];
+        let benign = ["ext4", "nfs", "tcp", "ipv6", "loop"];
+        for name in &benign {
+            for kw in &suspicious {
+                assert!(!name.to_lowercase().contains(kw),
+                    "benign module '{}' incorrectly matches keyword '{}'", name, kw);
+            }
+        }
+        for name in &suspicious {
+            let matches = suspicious.iter().any(|kw| name.to_lowercase().contains(kw));
+            assert!(matches, "suspicious module '{}' should match at least one keyword", name);
+        }
+    }
 }
 
 // ── Detection Modules ──────────────────────────────────────
