@@ -2,9 +2,9 @@
 
 Prioritized. Top = most important. Tags: [build] [test] [docs] [feature] [fix] [research]
 
-1. ~~[fix] Remove unused deps: clap, serde_json not used in any source file — dead weight in binary~~ DONE 2026-04-03
-2. ~~[test] Add integration test: seed sled DB with ThreatCards, verify daemon reads back correctly~~ DONE 2026-04-03
-3. [feature] Baseline engine (Phase 4): pattern extraction from right-swipes, fuzzy matching, 30-day decay
+1. [fix] Auto-kill sled history bug: threat_to_card called twice in kill path generates two different IDs — second resolve_threat call uses an ID never written to threats tree, so auto-killed cards stay Pending forever in GUI. Fix: capture card from first write, reuse its ID in resolve_threat after kill.
+2. [feature] Daemon baseline check: before writing a new ThreatCard, load all_baselines and check for module+value match — skip writing if baselined. Right-swipes currently have zero effect on future daemon scans; the core learn-and-suppress loop is entirely missing from main.rs.
+3. [fix] f50 cmdline signature mismatch: /proc/[pid]/cmdline is NUL-delimited so "nc -e" and "bash -i" (space-containing) will never match the raw string. Join split-on-NUL parts with spaces before matching, or match individual tokens. These two highest-value reverse-shell signatures silently fail on every system.
 4. ~~[feature] Signal handling: catch SIGTERM for graceful sled flush and shutdown~~ DONE 2026-04-03
 5. ~~[fix] GUI swipe animation: drag_offset translates card but current impl doesn't visually shift — wire offset into paint transform~~ DONE 2026-04-03
 6. ~~[feature] Daemon: extract process_name and command fields from /proc/[pid]/cmdline into ThreatCard (currently None)~~ DONE 2026-04-03
