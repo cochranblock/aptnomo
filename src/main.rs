@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use aptnomo::types::{ThreatCard, CardStatus, Module, Severity as GuiSeverity};
 use aptnomo::store;
@@ -57,10 +58,17 @@ fn main() {
         }
     };
 
+    // Signal handling: SIGTERM/SIGINT for graceful shutdown
+    unsafe {
+        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, signal_handler as *const () as libc::sighandler_t);
+    }
+    SHUTDOWN.store(false, Ordering::SeqCst);
+
     // First scan is fast
     let mut interval = FAST_SCAN;
 
-    loop {
+    while !SHUTDOWN.load(Ordering::SeqCst) {
         let threats = scan_all();
 
         if threats.is_empty() {
@@ -95,8 +103,30 @@ fn main() {
             interval = SCAN_INTERVAL;
         }
 
-        thread::sleep(interval);
+        // Sleep in short increments so we can check the shutdown flag
+        let mut slept = Duration::ZERO;
+        while slept < interval && !SHUTDOWN.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(500));
+            slept += Duration::from_millis(500);
+        }
     }
+
+    // Graceful shutdown
+    eprintln!("[aptnomo] shutting down...");
+    if let Some(ref db) = db {
+        let _ = db.flush();
+        eprintln!("[aptnomo] sled flushed.");
+    }
+    let _ = std::fs::remove_file("/tmp/aptnomo/pid");
+    eprintln!("[aptnomo] stopped.");
+}
+
+/// Global shutdown flag for signal handler
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Signal handler — sets the shutdown flag
+extern "C" fn signal_handler(_sig: libc::c_int) {
+    SHUTDOWN.store(true, Ordering::SeqCst);
 }
 
 /// Run all detection modules
