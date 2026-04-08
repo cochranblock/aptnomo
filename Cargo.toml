@@ -30,9 +30,10 @@ zstd = "0.13"
 eframe = { version = "0.31", optional = true }
 
 [dev-dependencies]
+serde_json = "1"
 
 [dependencies.exopack]
-path = "../exopack"
+git = "https://github.com/cochranblock/exopack"
 optional = true
 features = ["triple_sims"]
 
