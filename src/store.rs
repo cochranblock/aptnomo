@@ -146,8 +146,11 @@ pub fn stats(db: &sled::Db) -> anyhow::Result<Stats> {
     let pending: Vec<(String, ThreatCard)> = scan_prefix(db, TREE_THREATS, "")?;
     let history: Vec<(String, ThreatCard)> = scan_prefix(db, TREE_HISTORY, "")?;
 
-    let mut s = Stats::default();
-    s.pending = pending.len();
+    let mut s = Stats {
+        pending: pending.len(),
+        total_threats: pending.len() + history.len(),
+        ..Default::default()
+    };
     for (_, card) in &history {
         match card.status {
             CardStatus::Baselined => s.baselined += 1,
@@ -157,7 +160,6 @@ pub fn stats(db: &sled::Db) -> anyhow::Result<Stats> {
             CardStatus::Pending => {} // shouldn't be in history
         }
     }
-    s.total_threats = s.pending + history.len();
     Ok(s)
 }
 
@@ -399,8 +401,349 @@ mod tests {
     #[test]
     fn resolve_nonexistent_is_noop() {
         let db = temp_db();
-        // Resolving an ID that doesn't exist should not panic or error
         resolve_threat(&db, 9999, CardStatus::Killed).unwrap();
         assert_eq!(count(&db, TREE_HISTORY).unwrap(), 0);
+    }
+
+    // ── Generic helper tests ──
+
+    #[test]
+    fn f96_get_nonexistent_key_returns_none() {
+        let db = temp_db();
+        let result: Option<ThreatCard> = f96_get(&db, TREE_THREATS, "does_not_exist").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn f97_put_f96_get_with_empty_key() {
+        let db = temp_db();
+        let card = sample_card(1);
+        f97_put(&db, TREE_THREATS, "", &card).unwrap();
+        let back: Option<ThreatCard> = f96_get(&db, TREE_THREATS, "").unwrap();
+        assert!(back.is_some());
+        assert_eq!(back.unwrap().id, 1);
+    }
+
+    #[test]
+    fn f97_put_overwrites_same_key() {
+        let db = temp_db();
+        let mut c1 = sample_card(1);
+        c1.title = "first".into();
+        let mut c2 = sample_card(2);
+        c2.title = "second".into();
+        f97_put(&db, TREE_THREATS, "key1", &c1).unwrap();
+        f97_put(&db, TREE_THREATS, "key1", &c2).unwrap();
+        let back: Option<ThreatCard> = f96_get(&db, TREE_THREATS, "key1").unwrap();
+        assert_eq!(back.unwrap().title, "second");
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 1);
+    }
+
+    #[test]
+    fn scan_prefix_with_specific_prefix() {
+        let db = temp_db();
+        f97_put(&db, "test_tree", "alpha:1", &sample_card(1)).unwrap();
+        f97_put(&db, "test_tree", "alpha:2", &sample_card(2)).unwrap();
+        f97_put(&db, "test_tree", "beta:1", &sample_card(3)).unwrap();
+
+        let alpha: Vec<(String, ThreatCard)> = scan_prefix(&db, "test_tree", "alpha:").unwrap();
+        assert_eq!(alpha.len(), 2);
+        let beta: Vec<(String, ThreatCard)> = scan_prefix(&db, "test_tree", "beta:").unwrap();
+        assert_eq!(beta.len(), 1);
+        let all: Vec<(String, ThreatCard)> = scan_prefix(&db, "test_tree", "").unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn scan_prefix_no_matches() {
+        let db = temp_db();
+        f97_put(&db, "test_tree", "alpha:1", &sample_card(1)).unwrap();
+        let empty: Vec<(String, ThreatCard)> = scan_prefix(&db, "test_tree", "zzz").unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn count_empty_tree() {
+        let db = temp_db();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 0);
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 0);
+        assert_eq!(count(&db, TREE_BASELINE).unwrap(), 0);
+    }
+
+    #[test]
+    fn count_after_inserts_and_deletes() {
+        let db = temp_db();
+        write_threat(&db, &sample_card(1)).unwrap();
+        write_threat(&db, &sample_card(2)).unwrap();
+        write_threat(&db, &sample_card(3)).unwrap();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 3);
+        resolve_threat(&db, 1, CardStatus::Killed).unwrap();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 2);
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 1);
+    }
+
+    // ── threat_key format ──
+
+    #[test]
+    fn threat_key_zero_padded() {
+        assert_eq!(threat_key(0), "0000000000000000");
+        assert_eq!(threat_key(1), "0000000000000001");
+        assert_eq!(threat_key(999), "0000000000000999");
+        assert_eq!(threat_key(u64::MAX), "18446744073709551615");
+    }
+
+    #[test]
+    fn threat_key_ordering_is_chronological() {
+        // Lexicographic order of zero-padded keys matches numeric order
+        let k1 = threat_key(1);
+        let k2 = threat_key(2);
+        let k100 = threat_key(100);
+        assert!(k1 < k2);
+        assert!(k2 < k100);
+    }
+
+    // ── Write/overwrite ──
+
+    #[test]
+    fn write_threat_same_id_overwrites() {
+        let db = temp_db();
+        let mut c = sample_card(1);
+        c.title = "original".into();
+        write_threat(&db, &c).unwrap();
+        c.title = "updated".into();
+        write_threat(&db, &c).unwrap();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 1);
+        let back: Option<ThreatCard> = f96_get(&db, TREE_THREATS, &threat_key(1)).unwrap();
+        assert_eq!(back.unwrap().title, "updated");
+    }
+
+    // ── pending_threats edge cases ──
+
+    #[test]
+    fn pending_threats_empty_db() {
+        let db = temp_db();
+        let pending = pending_threats(&db).unwrap();
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn pending_threats_all_resolved() {
+        let db = temp_db();
+        write_threat(&db, &sample_card(1)).unwrap();
+        write_threat(&db, &sample_card(2)).unwrap();
+        resolve_threat(&db, 1, CardStatus::Killed).unwrap();
+        resolve_threat(&db, 2, CardStatus::Baselined).unwrap();
+        let pending = pending_threats(&db).unwrap();
+        assert!(pending.is_empty());
+    }
+
+    // ── history_cards ──
+
+    #[test]
+    fn history_cards_empty() {
+        let db = temp_db();
+        assert!(history_cards(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn history_cards_mixed_statuses() {
+        let db = temp_db();
+        write_threat(&db, &sample_card(1)).unwrap();
+        write_threat(&db, &sample_card(2)).unwrap();
+        write_threat(&db, &sample_card(3)).unwrap();
+        resolve_threat(&db, 1, CardStatus::Killed).unwrap();
+        resolve_threat(&db, 2, CardStatus::Baselined).unwrap();
+        resolve_threat(&db, 3, CardStatus::Quarantined).unwrap();
+        let hist = history_cards(&db).unwrap();
+        assert_eq!(hist.len(), 3);
+        let statuses: Vec<CardStatus> = hist.iter().map(|c| c.status).collect();
+        assert!(statuses.contains(&CardStatus::Killed));
+        assert!(statuses.contains(&CardStatus::Baselined));
+        assert!(statuses.contains(&CardStatus::Quarantined));
+    }
+
+    // ── stats edge cases ──
+
+    #[test]
+    fn stats_empty_db() {
+        let db = temp_db();
+        let s = stats(&db).unwrap();
+        assert_eq!(s.total_threats, 0);
+        assert_eq!(s.pending, 0);
+        assert_eq!(s.baselined, 0);
+        assert_eq!(s.killed, 0);
+        assert_eq!(s.quarantined, 0);
+        assert_eq!(s.auto_killed, 0);
+    }
+
+    #[test]
+    fn stats_only_pending() {
+        let db = temp_db();
+        write_threat(&db, &sample_card(1)).unwrap();
+        write_threat(&db, &sample_card(2)).unwrap();
+        let s = stats(&db).unwrap();
+        assert_eq!(s.total_threats, 2);
+        assert_eq!(s.pending, 2);
+        assert_eq!(s.killed, 0);
+    }
+
+    #[test]
+    fn stats_all_auto_killed() {
+        let db = temp_db();
+        for i in 1..=5 {
+            write_threat(&db, &sample_card(i)).unwrap();
+            resolve_threat(&db, i, CardStatus::AutoKilled).unwrap();
+        }
+        let s = stats(&db).unwrap();
+        assert_eq!(s.total_threats, 5);
+        assert_eq!(s.pending, 0);
+        assert_eq!(s.auto_killed, 5);
+    }
+
+    // ── is_duplicate edge cases ──
+
+    #[test]
+    fn is_duplicate_empty_db() {
+        let db = temp_db();
+        assert!(!is_duplicate(&db, &Module::Process, "anything").unwrap());
+    }
+
+    #[test]
+    fn is_duplicate_after_resolve() {
+        let db = temp_db();
+        let card = sample_card(1);
+        write_threat(&db, &card).unwrap();
+        assert!(is_duplicate(&db, &Module::Process, &card.description).unwrap());
+        resolve_threat(&db, 1, CardStatus::Killed).unwrap();
+        // After resolving, it's no longer in threats tree
+        assert!(!is_duplicate(&db, &Module::Process, &card.description).unwrap());
+    }
+
+    // ── Baseline tests ──
+
+    #[test]
+    fn add_baseline_all_modules() {
+        let db = temp_db();
+        let modules = [Module::Persistence, Module::Network, Module::Rootkit, Module::Ssh,
+                       Module::Process, Module::Logs, Module::Cron, Module::Files];
+        for (i, m) in modules.iter().enumerate() {
+            let p = BaselinePattern {
+                module: *m, pattern_type: PatternType::ProcessName,
+                value: format!("val{}", i), learned_at: 0, swipe_count: 1,
+            };
+            add_baseline(&db, &p).unwrap();
+        }
+        assert_eq!(all_baselines(&db).unwrap().len(), 8);
+    }
+
+    #[test]
+    fn add_baseline_all_pattern_types() {
+        let db = temp_db();
+        let types = [PatternType::ProcessName, PatternType::ListenPort, PatternType::FilePath,
+                     PatternType::CronPattern, PatternType::SshKey];
+        for (i, pt) in types.iter().enumerate() {
+            let p = BaselinePattern {
+                module: Module::Process, pattern_type: *pt,
+                value: format!("val{}", i), learned_at: 0, swipe_count: 1,
+            };
+            add_baseline(&db, &p).unwrap();
+        }
+        // All have module=Process but different values, so different keys
+        assert_eq!(all_baselines(&db).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn all_baselines_empty() {
+        let db = temp_db();
+        assert!(all_baselines(&db).unwrap().is_empty());
+    }
+
+    // ── Scale test ──
+
+    #[test]
+    fn scale_100_threats() {
+        let db = temp_db();
+        let modules = [Module::Persistence, Module::Network, Module::Rootkit, Module::Ssh,
+                       Module::Process, Module::Logs, Module::Cron, Module::Files];
+        for i in 0..100u64 {
+            let c = card_for_module(i, modules[(i % 8) as usize], Severity::Orange);
+            write_threat(&db, &c).unwrap();
+        }
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 100);
+        assert_eq!(pending_threats(&db).unwrap().len(), 100);
+
+        // Resolve half
+        for i in 0..50u64 {
+            resolve_threat(&db, i, CardStatus::Baselined).unwrap();
+        }
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 50);
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 50);
+        assert_eq!(pending_threats(&db).unwrap().len(), 50);
+
+        let s = stats(&db).unwrap();
+        assert_eq!(s.total_threats, 100);
+        assert_eq!(s.pending, 50);
+        assert_eq!(s.baselined, 50);
+    }
+
+    // ── Resolve with all statuses ──
+
+    #[test]
+    fn resolve_with_every_status() {
+        let db = temp_db();
+        let statuses = [CardStatus::Baselined, CardStatus::Killed, CardStatus::Quarantined, CardStatus::AutoKilled];
+        for (i, status) in statuses.iter().enumerate() {
+            let id = i as u64 + 1;
+            write_threat(&db, &sample_card(id)).unwrap();
+            resolve_threat(&db, id, *status).unwrap();
+            let hist: Option<ThreatCard> = f96_get(&db, TREE_HISTORY, &threat_key(id)).unwrap();
+            assert_eq!(hist.unwrap().status, *status);
+        }
+    }
+
+    // ── Bincode+zstd compression verification ──
+
+    #[test]
+    fn compressed_data_is_smaller_than_json() {
+        let db = temp_db();
+        let card = ThreatCard {
+            id: 1, timestamp: 1700000000, module: Module::Process, severity: Severity::Red,
+            title: "a]".repeat(100), // repetitive data compresses well
+            description: "b".repeat(100),
+            process_name: Some("long_process_name".into()),
+            pid: Some(12345), file_path: Some("/very/long/path/to/file".into()),
+            command: Some("cmd --with --many --flags --and --arguments".into()),
+            status: CardStatus::Pending, auto_kill: true,
+        };
+        let json_size = serde_json::to_vec(&card).unwrap().len();
+        write_threat(&db, &card).unwrap();
+        // Read raw bytes from sled
+        let tree = db.open_tree(TREE_THREATS).unwrap();
+        let raw = tree.get(threat_key(1).as_bytes()).unwrap().unwrap();
+        assert!(raw.len() < json_size, "compressed ({}) should be < json ({})", raw.len(), json_size);
+    }
+
+    // ── db_path ──
+
+    #[test]
+    fn db_path_contains_aptnomo() {
+        let path = db_path();
+        assert!(path.to_str().unwrap().contains(".aptnomo"));
+        assert!(path.to_str().unwrap().contains("db"));
+    }
+
+    // ── Multiple trees independent ──
+
+    #[test]
+    fn trees_are_independent() {
+        let db = temp_db();
+        f97_put(&db, TREE_THREATS, "key1", &sample_card(1)).unwrap();
+        f97_put(&db, TREE_HISTORY, "key1", &sample_card(2)).unwrap();
+        f97_put(&db, TREE_BASELINE, "key1", &BaselinePattern {
+            module: Module::Ssh, pattern_type: PatternType::SshKey,
+            value: "fingerprint".into(), learned_at: 0, swipe_count: 1,
+        }).unwrap();
+        assert_eq!(count(&db, TREE_THREATS).unwrap(), 1);
+        assert_eq!(count(&db, TREE_HISTORY).unwrap(), 1);
+        assert_eq!(count(&db, TREE_BASELINE).unwrap(), 1);
     }
 }

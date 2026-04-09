@@ -272,19 +272,19 @@ fn f92_swipe_handler(
             cards.retain(|c| c.id != card.id);
         } else if *drag_offset < -100.0 {
             // Left swipe — kill
-            if let Some(pid) = card.pid {
-                if pid > 2 {
-                    unsafe { libc::kill(pid as i32, libc::SIGKILL); }
-                }
+            if let Some(pid) = card.pid
+                && pid > 2
+            {
+                unsafe { libc::kill(pid as i32, libc::SIGKILL); }
             }
             let _ = store::resolve_threat(db, card.id, CardStatus::Killed);
             cards.retain(|c| c.id != card.id);
         } else if *drag_offset_y < -80.0 {
             // Up swipe — quarantine
-            if let Some(pid) = card.pid {
-                if pid > 2 {
-                    unsafe { libc::kill(pid as i32, libc::SIGSTOP); }
-                }
+            if let Some(pid) = card.pid
+                && pid > 2
+            {
+                unsafe { libc::kill(pid as i32, libc::SIGSTOP); }
             }
             let _ = store::resolve_threat(db, card.id, CardStatus::Quarantined);
             cards.retain(|c| c.id != card.id);

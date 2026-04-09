@@ -83,21 +83,18 @@ fn main() {
                 if let Some(ref db) = db {
                     let module = types::module_from_str(t.module);
                     let is_dup = store::is_duplicate(db, &module, &t.description).unwrap_or(false);
-                    if !is_dup {
-                        if let Ok(card) = threat_to_card(db, t) {
-                            if store::write_threat(db, &card).is_ok() {
-                                written_card_id = Some(card.id);
-                            }
-                        }
+                    if !is_dup
+                        && let Ok(card) = threat_to_card(db, t)
+                        && store::write_threat(db, &card).is_ok()
+                    {
+                        written_card_id = Some(card.id);
                     }
                 }
-                if t.auto_kill && t.severity >= Severity::Critical {
-                    if is_safe_to_kill(t) {
-                        kill_threat(t);
-                        // Resolve the card written above — same ID, moved to history.
-                        if let (Some(db), Some(id)) = (&db, written_card_id) {
-                            let _ = store::resolve_threat(db, id, CardStatus::AutoKilled);
-                        }
+                if t.auto_kill && t.severity >= Severity::Critical && is_safe_to_kill(t) {
+                    kill_threat(t);
+                    // Resolve the card written above — same ID, moved to history.
+                    if let (Some(db), Some(id)) = (&db, written_card_id) {
+                        let _ = store::resolve_threat(db, id, CardStatus::AutoKilled);
                     }
                 }
             }
@@ -263,6 +260,223 @@ fn threat_to_card(db: &sled::Db, t: &Threat) -> anyhow::Result<ThreatCard> {
     })
 }
 
+// ── Detection Modules ──────────────────────────────────────
+
+/// f10: Check for persistence mechanisms
+fn f10_persistence() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    // Check suspicious systemd units
+    for dir in &["/etc/systemd/system", "/usr/lib/systemd/system"] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(e.path()) {
+                    // Suspicious: ExecStart pointing to /tmp or hidden dirs
+                    if content.contains("/tmp/") || content.contains("/.") {
+                        threats.push(Threat {
+                            module: "persistence",
+                            severity: Severity::High,
+                            description: format!("systemd unit with suspicious ExecStart: {}", e.path().display()),
+                            pid: None,
+                            path: Some(e.path().display().to_string()),
+                            auto_kill: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    threats
+}
+
+/// f20: Check for suspicious network connections
+fn f20_network() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
+        for line in tcp.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() > 3 {
+                // State 0A = LISTEN
+                if parts[3] == "0A" {
+                    // Check for listening on all interfaces (0.0.0.0)
+                    if parts[1].starts_with("00000000:") {
+                        let port_hex = &parts[1][9..];
+                        if let Ok(port) = u16::from_str_radix(port_hex, 16) {
+                            let known_ports = [22, 80, 443, 8080, 8081, 3000, 3001, 8000];
+                            if !known_ports.contains(&port) {
+                                threats.push(Threat {
+                                    module: "network",
+                                    severity: Severity::Medium,
+                                    description: format!("unknown service listening on 0.0.0.0:{}", port),
+                                    pid: None,
+                                    path: None,
+                                    auto_kill: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    threats
+}
+
+/// f30: Check for rootkit indicators
+fn f30_rootkit() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    // Check for hidden kernel modules
+    if let Ok(modules) = std::fs::read_to_string("/proc/modules") {
+        let suspicious = ["hide", "stealth", "rootkit", "backdoor", "keylog"];
+        for line in modules.lines() {
+            let name = line.split_whitespace().next().unwrap_or("");
+            for s in &suspicious {
+                if name.to_lowercase().contains(s) {
+                    threats.push(Threat {
+                        module: "rootkit",
+                        severity: Severity::Critical,
+                        description: format!("suspicious kernel module: {}", name),
+                        pid: None,
+                        path: None,
+                        auto_kill: false,
+                    });
+                }
+            }
+        }
+    }
+    threats
+}
+
+/// f40: Check for unauthorized SSH keys
+fn f40_ssh() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let auth_keys = format!("{}/.ssh/authorized_keys", home);
+    if let Ok(keys) = std::fs::read_to_string(&auth_keys) {
+        let count = keys.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count();
+        if count > 5 {
+            threats.push(Threat {
+                module: "ssh",
+                severity: Severity::Medium,
+                description: format!("{} SSH authorized keys — verify all are expected", count),
+                pid: None,
+                path: Some(auth_keys),
+                auto_kill: false,
+            });
+        }
+    }
+    threats
+}
+
+/// f50: Check for suspicious processes
+fn f50_processes() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for e in entries.flatten() {
+            let name = e.file_name();
+            if let Ok(pid) = name.to_string_lossy().parse::<u32>() {
+                let cmdline_path = format!("/proc/{}/cmdline", pid);
+                if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
+                    let suspicious = ["cryptominer", "xmrig", "stratum", "reverse_shell", "nc -e", "bash -i"];
+                    for s in &suspicious {
+                        if cmdline.to_lowercase().contains(s) {
+                            threats.push(Threat {
+                                module: "processes",
+                                severity: Severity::Critical,
+                                description: format!("suspicious process: {}", cmdline.replace('\0', " ").trim()),
+                                pid: Some(pid),
+                                path: None,
+                                auto_kill: true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    threats
+}
+
+/// f60: Check for log tampering
+fn f60_logs() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    let log_files = ["/var/log/auth.log", "/var/log/syslog", "/var/log/messages"];
+    for log in &log_files {
+        if let Ok(meta) = std::fs::metadata(log)
+            && meta.len() == 0
+        {
+            threats.push(Threat {
+                module: "logs",
+                severity: Severity::High,
+                description: format!("log file is empty (possible wipe): {}", log),
+                pid: None,
+                path: Some(log.to_string()),
+                auto_kill: false,
+            });
+        }
+    }
+    threats
+}
+
+/// f70: Check for suspicious cron jobs
+fn f70_cron() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    for dir in &["/etc/cron.d", "/var/spool/cron/crontabs", "/etc/cron.daily"] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(e.path())
+                    && (content.contains("/tmp/")
+                        || content.contains("curl ")
+                        || content.contains("wget "))
+                {
+                    threats.push(Threat {
+                        module: "cron",
+                        severity: Severity::High,
+                        description: format!("cron job with suspicious command: {}", e.path().display()),
+                        pid: None,
+                        path: Some(e.path().display().to_string()),
+                        auto_kill: false,
+                    });
+                }
+            }
+        }
+    }
+    threats
+}
+
+/// f80: Check for suspicious files in common attack paths
+fn f80_files() -> Vec<Threat> {
+    let mut threats = Vec::new();
+    let sus_dirs = ["/tmp", "/dev/shm", "/var/tmp"];
+    for dir in &sus_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                // Hidden executables in temp dirs
+                if name.starts_with('.')
+                    && let Ok(meta) = e.metadata()
+                    && meta.is_file()
+                    && meta.len() > 10000
+                {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if meta.permissions().mode() & 0o111 != 0 {
+                            threats.push(Threat {
+                                module: "files",
+                                severity: Severity::Critical,
+                                description: format!("hidden executable in {}: {}", dir, name),
+                                pid: None,
+                                path: Some(e.path().display().to_string()),
+                                auto_kill: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    threats
+}
 // ── Tests ──────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -603,7 +817,7 @@ mod tests {
         let known: &[u16] = &[22, 80, 443, 8080, 8081, 3000, 3001, 8000];
         for t in &threats {
             if t.description.contains("0.0.0.0:") {
-                let port_str = t.description.split(':').last().unwrap_or("0");
+                let port_str = t.description.split(':').next_back().unwrap_or("0");
                 if let Ok(port) = port_str.parse::<u16>() {
                     assert!(!known.contains(&port),
                         "known port {} was incorrectly flagged", port);
@@ -653,12 +867,11 @@ mod tests {
         let mut written_card_id: Option<u64> = None;
         let module = types::module_from_str(t.module);
         let is_dup = store::is_duplicate(db, &module, &t.description).unwrap_or(false);
-        if !is_dup {
-            if let Ok(card) = threat_to_card(db, t) {
-                if store::write_threat(db, &card).is_ok() {
-                    written_card_id = Some(card.id);
-                }
-            }
+        if !is_dup
+            && let Ok(card) = threat_to_card(db, t)
+            && store::write_threat(db, &card).is_ok()
+        {
+            written_card_id = Some(card.id);
         }
         let kill_path_ran = t.auto_kill && t.severity >= Severity::Critical;
         if kill_path_ran {
@@ -819,218 +1032,3 @@ mod tests {
     }
 }
 
-// ── Detection Modules ──────────────────────────────────────
-
-/// f10: Check for persistence mechanisms
-fn f10_persistence() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    // Check suspicious systemd units
-    for dir in &["/etc/systemd/system", "/usr/lib/systemd/system"] {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for e in entries.flatten() {
-                if let Ok(content) = std::fs::read_to_string(e.path()) {
-                    // Suspicious: ExecStart pointing to /tmp or hidden dirs
-                    if content.contains("/tmp/") || content.contains("/.") {
-                        threats.push(Threat {
-                            module: "persistence",
-                            severity: Severity::High,
-                            description: format!("systemd unit with suspicious ExecStart: {}", e.path().display()),
-                            pid: None,
-                            path: Some(e.path().display().to_string()),
-                            auto_kill: false,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    threats
-}
-
-/// f20: Check for suspicious network connections
-fn f20_network() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    if let Ok(tcp) = std::fs::read_to_string("/proc/net/tcp") {
-        for line in tcp.lines().skip(1) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 3 {
-                // State 0A = LISTEN
-                if parts[3] == "0A" {
-                    // Check for listening on all interfaces (0.0.0.0)
-                    if parts[1].starts_with("00000000:") {
-                        let port_hex = &parts[1][9..];
-                        if let Ok(port) = u16::from_str_radix(port_hex, 16) {
-                            let known_ports = [22, 80, 443, 8080, 8081, 3000, 3001, 8000];
-                            if !known_ports.contains(&port) {
-                                threats.push(Threat {
-                                    module: "network",
-                                    severity: Severity::Medium,
-                                    description: format!("unknown service listening on 0.0.0.0:{}", port),
-                                    pid: None,
-                                    path: None,
-                                    auto_kill: false,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    threats
-}
-
-/// f30: Check for rootkit indicators
-fn f30_rootkit() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    // Check for hidden kernel modules
-    if let Ok(modules) = std::fs::read_to_string("/proc/modules") {
-        let suspicious = ["hide", "stealth", "rootkit", "backdoor", "keylog"];
-        for line in modules.lines() {
-            let name = line.split_whitespace().next().unwrap_or("");
-            for s in &suspicious {
-                if name.to_lowercase().contains(s) {
-                    threats.push(Threat {
-                        module: "rootkit",
-                        severity: Severity::Critical,
-                        description: format!("suspicious kernel module: {}", name),
-                        pid: None,
-                        path: None,
-                        auto_kill: false,
-                    });
-                }
-            }
-        }
-    }
-    threats
-}
-
-/// f40: Check for unauthorized SSH keys
-fn f40_ssh() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let auth_keys = format!("{}/.ssh/authorized_keys", home);
-    if let Ok(keys) = std::fs::read_to_string(&auth_keys) {
-        let count = keys.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count();
-        if count > 5 {
-            threats.push(Threat {
-                module: "ssh",
-                severity: Severity::Medium,
-                description: format!("{} SSH authorized keys — verify all are expected", count),
-                pid: None,
-                path: Some(auth_keys),
-                auto_kill: false,
-            });
-        }
-    }
-    threats
-}
-
-/// f50: Check for suspicious processes
-fn f50_processes() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    if let Ok(entries) = std::fs::read_dir("/proc") {
-        for e in entries.flatten() {
-            let name = e.file_name();
-            if let Ok(pid) = name.to_string_lossy().parse::<u32>() {
-                let cmdline_path = format!("/proc/{}/cmdline", pid);
-                if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
-                    let suspicious = ["cryptominer", "xmrig", "stratum", "reverse_shell", "nc -e", "bash -i"];
-                    for s in &suspicious {
-                        if cmdline.to_lowercase().contains(s) {
-                            threats.push(Threat {
-                                module: "processes",
-                                severity: Severity::Critical,
-                                description: format!("suspicious process: {}", cmdline.replace('\0', " ").trim()),
-                                pid: Some(pid),
-                                path: None,
-                                auto_kill: true,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    threats
-}
-
-/// f60: Check for log tampering
-fn f60_logs() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    let log_files = ["/var/log/auth.log", "/var/log/syslog", "/var/log/messages"];
-    for log in &log_files {
-        if let Ok(meta) = std::fs::metadata(log) {
-            if meta.len() == 0 {
-                threats.push(Threat {
-                    module: "logs",
-                    severity: Severity::High,
-                    description: format!("log file is empty (possible wipe): {}", log),
-                    pid: None,
-                    path: Some(log.to_string()),
-                    auto_kill: false,
-                });
-            }
-        }
-    }
-    threats
-}
-
-/// f70: Check for suspicious cron jobs
-fn f70_cron() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    for dir in &["/etc/cron.d", "/var/spool/cron/crontabs", "/etc/cron.daily"] {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for e in entries.flatten() {
-                if let Ok(content) = std::fs::read_to_string(e.path()) {
-                    if content.contains("/tmp/") || content.contains("curl ") || content.contains("wget ") {
-                        threats.push(Threat {
-                            module: "cron",
-                            severity: Severity::High,
-                            description: format!("cron job with suspicious command: {}", e.path().display()),
-                            pid: None,
-                            path: Some(e.path().display().to_string()),
-                            auto_kill: false,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    threats
-}
-
-/// f80: Check for suspicious files in common attack paths
-fn f80_files() -> Vec<Threat> {
-    let mut threats = Vec::new();
-    let sus_dirs = ["/tmp", "/dev/shm", "/var/tmp"];
-    for dir in &sus_dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
-                // Hidden executables in temp dirs
-                if name.starts_with('.') {
-                    if let Ok(meta) = e.metadata() {
-                        if meta.is_file() && meta.len() > 10000 {
-                            #[cfg(unix)]
-                            {
-                                use std::os::unix::fs::PermissionsExt;
-                                if meta.permissions().mode() & 0o111 != 0 {
-                                    threats.push(Threat {
-                                        module: "files",
-                                        severity: Severity::Critical,
-                                        description: format!("hidden executable in {}: {}", dir, name),
-                                        pid: None,
-                                        path: Some(e.path().display().to_string()),
-                                        auto_kill: false,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    threats
-}

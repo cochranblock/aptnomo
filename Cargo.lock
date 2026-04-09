@@ -179,6 +179,7 @@ dependencies = [
  "exopack",
  "libc",
  "serde",
+ "serde_json",
  "sled",
  "zstd",
 ]
@@ -1086,6 +1087,7 @@ dependencies = [
 [[package]]
 name = "exopack"
 version = "0.1.0"
+source = "git+https://github.com/cochranblock/exopack#33ceb9e78beff3dcd52c8c636ff35ffc14bda2e4"
 
 [[package]]
 name = "fastrand"
