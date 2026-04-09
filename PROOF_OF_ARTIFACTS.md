@@ -99,10 +99,12 @@ strip = true
 | Metric | Value |
 |--------|-------|
 | Source files | 6 (lib.rs, types.rs, store.rs, main.rs, aptnomo-gui.rs, aptnomo-test.rs) |
-| Lines of code | ~1,200 |
-| Unsafe blocks | 1 in daemon (libc::kill), 2 in GUI (libc::kill, libc::SIGSTOP) |
+| Lines of code | ~2,750 (including tests) |
+| Unsafe blocks | 3 in daemon (signal handlers + libc::kill), 2 in GUI (libc::kill, libc::SIGSTOP) |
 | Feature gates | 2 (gui -> eframe, tests -> exopack) |
-| Unit tests | 10 (store: 6 unit + 4 integration — full lifecycle, cross-tree, baseline dedup, resolve noop) |
+| Unit tests | **123** (77 lib: types + store; 46 main bin: detection + threat_to_card + auto-kill regression) |
+| Clippy | `cargo clippy --all-targets --features gui` — **0 warnings** |
+| Release binary | `target/release/aptnomo` — **1,003,744 bytes** (~980 KB stripped) |
 
 ## P23: Triple Lens
 
@@ -121,3 +123,37 @@ strip = true
 | `536da5d` | 2026-03-30 | fix TOI: add AI Role field to every entry, add commit hashes |
 | `f0afe25` | 2026-03-31 | sync TOI and POA with all commits from last 48 hours |
 | `8f81f8e` | 2026-04-02 | phase 2: sled store, shared types, egui GUI binary |
+| `482640f` | 2026-04-09 | docs+chore: CLAUDE.md, refreshed BACKLOG/README, clippy clean across the board |
+
+## 2026-04-09 — Docs refresh + clippy clean (`482640f`)
+
+**What landed:**
+- New `CLAUDE.md` — project oneliner, build/test commands, full module map, detection-module table, sled schema, conventions
+- Rewritten `BACKLOG.md` — 20 prioritized work items grounded in current code, each anchored to file/function
+- Production-grade `README.md` — accurate test count (123), measured release size (~980 KB), corrected detection table, clarified auto-kill model, ASCII flow diagram
+- `src/main.rs` — test mod relocated to file end (fixes `clippy::items_after_test_module`); nested `if`/`if let` blocks collapsed via 2024-edition let-chains; `DoubleEndedIterator::last` → `next_back`
+- `src/store.rs` — `stats()` rebuilt via struct-update syntax (fixes `clippy::field_reassign_with_default`)
+- `src/types.rs` — `rotate_if_needed` collapsed via let-chain
+- `src/bin/aptnomo-gui.rs` — two pid-bounds let-chain collapses
+
+**Verification (run on commit `482640f`):**
+
+```text
+$ cargo clippy --all-targets --features gui
+    Finished `dev` profile [unoptimized + debuginfo] target(s)
+    (zero warnings)
+
+$ cargo test
+test result: ok. 77 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok.  0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+                  ────────
+                  123 / 123
+
+$ cargo build --release && ls -la target/release/aptnomo
+-rwxr-xr-x  1 mcochran  staff  1003744  Apr  9 12:42  target/release/aptnomo
+```
+
+**Diff stat:** 8 files changed, 1316 insertions(+), 371 deletions(-)
+
+**AI Role:** AI (Claude Opus 4.6, 1M context, via Claude Code) read the full source tree, drafted the three docs files, restructured `src/main.rs` for the test-module relocation, applied let-chain collapses across four files, and verified clippy + test cleanliness before commit. Human (GotEmCoach) directed the docs refresh and clippy-clean requirement.

@@ -76,3 +76,33 @@
 - GUI feature-gated behind `gui` feature to keep daemon binary small
 - Daemon keeps flat file output as fallback if sled fails
 - Theme ported from kova's egui pattern with aptnomo severity colors
+
+---
+
+## 2026-04-09 — Docs refresh + clippy clean across the board
+
+**Commit:** `482640f` — docs+chore: CLAUDE.md, refreshed BACKLOG/README, clippy clean across the board
+
+**What:** Full documentation refresh anchored on the current code state. Wrote `CLAUDE.md` from scratch (project oneliner, build/test commands, complete module map across `lib.rs` / `types.rs` / `store.rs` / `main.rs` / `aptnomo-gui.rs` / `aptnomo-test.rs`, detection-module table, sled schema, conventions). Rewrote `BACKLOG.md` with 20 prioritized items grounded in actual code (top items: f50 NUL-delimited cmdline signature bug, daemon ignores learned baselines, macOS detection backends). Polished `README.md` to production-grade with accurate metrics (123 unit tests, ~980 KB measured release binary, corrected detection table, ASCII flow diagram, clarified auto-kill model). Repaired all clippy warnings: moved test mod after detection modules in `main.rs` to fix `items_after_test_module`; collapsed nested `if`/`if let` blocks via 2024-edition let-chains in `main.rs`, `types.rs`, `store.rs`, and `aptnomo-gui.rs`; switched `DoubleEndedIterator::last` → `next_back`; rebuilt `store::stats()` via struct-update syntax instead of post-init field reassignment.
+
+**AI Role:** AI (Claude Opus 4.6, 1M context, via Claude Code) read the full source tree, drafted CLAUDE.md / BACKLOG.md / README.md, restructured `src/main.rs` to satisfy `clippy::items_after_test_module`, applied let-chain collapses across four files, and verified `cargo clippy --all-targets --features gui` reports zero warnings and `cargo test` passes 123/123. Human (GotEmCoach) directed the docs refresh and clippy-clean requirement.
+
+**Artifacts created/updated:**
+- `CLAUDE.md` *(new)* — project notes for Claude Code sessions
+- `BACKLOG.md` — 20 prioritized work items
+- `README.md` — production-grade refresh
+- `src/main.rs` — test mod relocated to file end; let-chain collapses; `next_back` fix
+- `src/store.rs` — `stats()` struct-update form
+- `src/types.rs` — `rotate_if_needed` let-chain
+- `src/bin/aptnomo-gui.rs` — two pid-bounds let-chain collapses
+
+**Verification:**
+- `cargo clippy --all-targets --features gui` → zero warnings
+- `cargo test` → 123 passed / 0 failed (77 lib + 46 main bin + 0 doc tests)
+- `cargo build --release` → `target/release/aptnomo` 1,003,744 bytes (~980 KB stripped)
+
+**Architecture decisions:**
+- 2024-edition let-chains adopted as the canonical style for collapsing nested `if let`/`if` blocks
+- Test modules live at the *end* of source files in this crate (lint-clean by construction)
+- BACKLOG entries reference the file/function they touch so contributors can pick them up cold
+- CLAUDE.md is the single source of truth for build/test commands; README is the public face
