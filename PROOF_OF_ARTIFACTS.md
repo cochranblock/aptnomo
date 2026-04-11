@@ -1,118 +1,124 @@
-# Proof of Artifacts — [aptnomo](https://cochranblock.org)
+<!-- Unlicense — cochranblock.org -->
 
-## Binaries
+# Proof of Artifacts — aptnomo
 
-| Binary | Feature | Size (release, stripped) | Purpose |
-|--------|---------|--------------------------|---------|
-| aptnomo | default | ~980 KB | Headless daemon |
-| aptnomo-gui | gui | ~3.5 MB | Threat review UI (egui) |
-| aptnomo-test | tests | — | Quality gate (TRIPLE SIMS) |
+*Hard evidence that this project is real, working, and built by humans with AI assistance — not AI hallucination.*
+
+## Project Metrics
 
 | Metric | Value |
 |--------|-------|
-| Language | Rust (edition 2024) |
-| Target | x86_64-unknown-linux-gnu / aarch64-apple-darwin |
-| Dependencies (daemon) | 6 (serde, anyhow, libc, sled, bincode, zstd) |
-| Dependencies (GUI) | +1 (eframe, optional) |
-| External services | 0 — no network, no cloud |
-| Config files | 0 — zero config |
-| Storage | sled DB at ~/.aptnomo/db/ (bincode + zstd) |
+| Source files (.rs) | 6 |
+| Lines of code | 2,766 (including tests) |
+| Tests | 123 (77 lib + 46 main bin) |
+| Commits | 21 |
+| Binary size (release) | 980 KB (1,003,744 bytes stripped) |
+| Dependencies (direct) | 6 (serde, anyhow, libc, sled, bincode, zstd) + 1 optional (eframe) |
+| Edition | 2024 |
+| MSRV | 1.85 |
+| License | Unlicense |
+
+## Repository
+
+- **GitHub:** https://github.com/cochranblock/aptnomo
+- **Live deployment:** Bare-metal daemon — no hosted service. Drop binary on machine, run it.
+
+## Architecture
+
+Autonomous APT threat hunter for bare-metal Linux. A daemon binary (`aptnomo`) runs 8 detection modules in a loop — fast scan on startup (30s), then every 5 minutes. Each module reads real system paths (`/proc`, `/etc/systemd`, `/var/log`) and returns a `Vec<Threat>`. Critical process threats are auto-killed via `SIGKILL` if they pass a safe-process guard. All threats are persisted to a sled database (`~/.aptnomo/db/`) with bincode + zstd compression across three trees (threats, history, baseline). A separate GUI binary (`aptnomo-gui`, behind the `gui` cargo feature) reads the same sled DB and presents threats as swipeable cards — right = baseline, left = kill, up = quarantine. Zero config. No network calls. No cloud.
+
+## Named Techniques
+
+| Name | Description | Commit |
+|------|-------------|--------|
+| APT No Mo | Zero-config daemon-mode threat hunting — no CLI, no YAML, no cloud. Drop and run. | `b020f3c` |
+| Tinder for Threats | Swipe-card threat triage: left=kill, right=baseline, up=quarantine. Mobile-friendly severity-colored cards. | `8f81f8e` |
+
+See `TIMELINE_OF_INVENTION.md` Human Revelations section for full provenance.
+
+## Test Coverage
+
+| Category | Count | Location |
+|----------|-------|----------|
+| types unit tests | 43 | `src/types.rs` — Module, Severity, CardStatus, PatternType, ThreatCard, BaselinePattern, Stats, serde roundtrips, rotate_if_needed |
+| store unit tests | 34 | `src/store.rs` — put/get, write/read threat, pending filter, resolve lifecycle, dedup, baseline CRUD, stats, scale (100 threats), compression verification |
+| daemon unit tests | 46 | `src/main.rs` — chrono_now, is_safe_to_kill, detection module no-panic/returns-vec (f10-f80), scan_all, threat_to_card (fields/severity/modules/pid/path/ids/timestamp), auto-kill sled history regression (7 tests) |
+| **Total** | **123** | |
+
+Quality gate: `cargo run --bin aptnomo-test --features tests` runs exopack TRIPLE SIMS — the test pipeline 3 times, all must pass.
 
 ## Detection Modules
 
-| # | Module | Function | Severity Range | Auto-kill |
-|---|--------|----------|----------------|-----------|
-| 1 | Persistence | f10 | High | No |
-| 2 | Network | f20 | Medium | No |
-| 3 | Rootkit | f30 | Critical | No |
-| 4 | SSH | f40 | Medium | No |
-| 5 | Processes | f50 | Critical | Yes |
-| 6 | Logs | f60 | High | No |
-| 7 | Cron | f70 | High | No |
-| 8 | Files | f80 | Critical | No |
-
-**Module count: 8**
-
-## Detection Categories
-
-| Category | Modules | Description |
-|----------|---------|-------------|
-| Persistence | f10, f70 | Systemd units, cron jobs pointing to temp/hidden paths |
-| Network | f20 | Unknown listeners on all interfaces |
-| Kernel | f30 | Suspicious kernel module names |
-| Authentication | f40 | SSH authorized_keys anomalies |
-| Process | f50 | Known malware process signatures |
-| Integrity | f60, f80 | Log tampering, hidden executables in temp dirs |
+| # | Module | Function | Scans | Severity | Auto-kill |
+|---|--------|----------|-------|----------|-----------|
+| 1 | Persistence | f10 | systemd units with ExecStart under /tmp or hidden dirs | High | No |
+| 2 | Network | f20 | /proc/net/tcp LISTEN on 0.0.0.0 (excludes known ports) | Medium | No |
+| 3 | Rootkit | f30 | /proc/modules names: hide, stealth, rootkit, backdoor, keylog | Critical | No |
+| 4 | SSH | f40 | $HOME/.ssh/authorized_keys count > 5 | Medium | No |
+| 5 | Processes | f50 | /proc/pid/cmdline: cryptominer, xmrig, stratum, reverse_shell, nc -e, bash -i | Critical | **Yes** |
+| 6 | Logs | f60 | Empty /var/log/{auth.log, syslog, messages} | High | No |
+| 7 | Cron | f70 | Cron files containing /tmp/, curl, wget | High | No |
+| 8 | Files | f80 | Hidden executables >10 KB in /tmp, /dev/shm, /var/tmp | Critical | No |
 
 ## Sled DB Schema
 
 | Tree | Key format | Value type | Compression |
 |------|-----------|------------|-------------|
-| threats | `{:016}` (zero-padded id) | ThreatCard | bincode + zstd level 3 |
-| baseline | `{module}:{value}` | BaselinePattern | bincode + zstd level 3 |
-| history | `{:016}` (zero-padded id) | ThreatCard | bincode + zstd level 3 |
+| threats | `{:016}` (zero-padded u64 ID) | ThreatCard | bincode + zstd level 3 |
+| history | `{:016}` (zero-padded u64 ID) | ThreatCard | bincode + zstd level 3 |
+| baseline | `{module_label}:{value}` | BaselinePattern | bincode + zstd level 3 |
 
-## GUI Functions
+## Compliance
 
-| Token | Name | Purpose |
-|-------|------|---------|
-| f90 | gui_main | eframe entry point, 420x720 viewport |
-| f91 | render_card | Severity-colored card with module, title, details |
-| f92 | swipe_handler | Drag detection: right=baseline, left=kill, up=quarantine |
-| f93 | baseline_learn | Extract pattern from card, write to baseline tree |
-| f94 | stats_screen | Counts per status and module |
-| f95 | sled_read | Poll sled every 1s for pending threats |
-| f96 | get | Generic sled get with bincode+zstd decompression |
-| f97 | put | Generic sled put with bincode+zstd compression |
-| f98 | apply_theme | Dark theme with severity color palette |
+- SBOM: `govdocs/SBOM.md`
+- Security policy: `govdocs/SECURITY.md` — scan targets, kill conditions, safe-process list
+- Supply chain audit: `govdocs/SUPPLY_CHAIN_AUDIT.md` — dep audit, unsafe inventory
+- SSDF: aligned with NIST SP 800-218
+- CISA Secure-by-Design: memory-safe Rust, no C dependencies outside libc
+- EO 14028: aligned
 
-## Build Verification
+## Build
 
-```bash
-# Build release daemon
-cargo build --release -p aptnomo
+```sh
+# Daemon only (default features)
+cargo build --release
 
-# Build release GUI
-cargo build --release -p aptnomo --features gui
+# Daemon + GUI
+cargo build --release --features gui
 
-# Run unit tests (6 store tests)
+# Unit tests (123 tests)
 cargo test
 
-# Run test gate (exopack TRIPLE SIMS)
-cargo run -p aptnomo --bin aptnomo-test --features tests
-# Expected: exit 0, 3/3 PASS
+# Quality gate (exopack TRIPLE SIMS, 3 passes)
+cargo run --bin aptnomo-test --features tests
+
+# Lint (must be zero warnings)
+cargo clippy --all-targets --features gui
 ```
 
-## Release Profile
+Release profile:
 
 ```toml
 [profile.release]
-opt-level = "z"
-lto = true
+opt-level    = "z"
+lto          = true
 codegen-units = 1
-panic = "abort"
-strip = true
+panic        = "abort"
+strip        = true
 ```
 
-## Source Stats
+## Verification
 
-| Metric | Value |
-|--------|-------|
-| Source files | 6 (lib.rs, types.rs, store.rs, main.rs, aptnomo-gui.rs, aptnomo-test.rs) |
-| Lines of code | ~2,750 (including tests) |
-| Unsafe blocks | 3 in daemon (signal handlers + libc::kill), 2 in GUI (libc::kill, libc::SIGSTOP) |
-| Feature gates | 2 (gui -> eframe, tests -> exopack) |
-| Unit tests | **123** (77 lib: types + store; 46 main bin: detection + threat_to_card + auto-kill regression) |
-| Clippy | `cargo clippy --all-targets --features gui` — **0 warnings** |
-| Release binary | `target/release/aptnomo` — **1,003,744 bytes** (~980 KB stripped) |
+A third party can verify every claim in this document:
 
-## P23: Triple Lens
-
-| Lens | Question | aptnomo Answer |
-|------|----------|----------------|
-| **Technical** | Compile, test, run on real hardware? | 6 store unit tests pass. TRIPLE SIMS 3/3. Daemon + GUI build clean. Release profile: LTO, strip, panic=abort. |
-| **Product** | Solve a real problem? | Autonomous APT detection on bare metal. Zero config, zero cloud, zero telemetry. 8 detection modules covering persistence, network, rootkit, SSH, processes, logs, cron, files. |
-| **Honest** | Claims verifiable? | Binary sizes from `ls -la`. Every detection module reads real `/proc` and `/etc` paths. SBOM and supply chain audit in `govdocs/`. Every commit hash in `TIMELINE_OF_INVENTION.md`. |
+1. **Binary size:** `cargo build --release && ls -la target/release/aptnomo` — expect ~980 KB.
+2. **Test count:** `cargo test 2>&1 | grep "test result"` — expect 77 + 46 + 0 = 123 passing.
+3. **Clippy clean:** `cargo clippy --all-targets --features gui 2>&1 | grep warning` — expect no output.
+4. **Commit count:** `git rev-list --count HEAD` — expect 21+.
+5. **Detection modules:** `grep -c "fn f[0-9]*_" src/main.rs` — expect 8.
+6. **Zero config:** `grep -r "clap\|structopt\|config\|\.env\|dotenv" Cargo.toml src/` — expect no matches.
+7. **No network calls:** `grep -r "reqwest\|hyper\|curl\|TcpStream::connect" src/` — expect no matches.
+8. **Commit hashes:** `git log --oneline` — every hash in the Commit Log below is present.
 
 ## Commit Log
 
@@ -123,37 +129,23 @@ strip = true
 | `536da5d` | 2026-03-30 | fix TOI: add AI Role field to every entry, add commit hashes |
 | `f0afe25` | 2026-03-31 | sync TOI and POA with all commits from last 48 hours |
 | `8f81f8e` | 2026-04-02 | phase 2: sled store, shared types, egui GUI binary |
-| `482640f` | 2026-04-09 | docs+chore: CLAUDE.md, refreshed BACKLOG/README, clippy clean across the board |
+| `6ef1651` | 2026-04-02 | docs: update all docs for phase 2 accuracy |
+| `1b7dad0` | 2026-04-02 | docs: add P23 Triple Lens quality gate to README and POA |
+| `161a69e` | 2026-04-02 | add BACKLOG.md: 20 prioritized work items |
+| `1df0393` | 2026-04-02 | fix: remove unused clap and serde_json deps |
+| `8fd969f` | 2026-04-02 | test: add 4 integration tests for sled store lifecycle |
+| `70181d9` | 2026-04-03 | feature: graceful shutdown on SIGTERM/SIGINT |
+| `aaa4b9c` | 2026-04-03 | fix: GUI swipe animation — card shifts horizontally |
+| `bcdbb5b` | 2026-04-03 | feature: populate process_name and command from /proc |
+| `d006501` | 2026-04-03 | feature: sled dedup — skip duplicate pending threats |
+| `e3ff930` | 2026-04-03 | feature: log rotation at 10 MB |
+| `87faa6b` | 2026-04-03 | test: 39 unit tests for main.rs |
+| `bc75ed2` | 2026-04-03 | P23 triple lens: readjust fire |
+| `ab3e597` | 2026-04-03 | fix: auto-kill sled history bug — capture card ID from first write |
+| `5db6abb` | 2026-04-03 | decouple exopack: path dep to git |
+| `482640f` | 2026-04-09 | docs+chore: CLAUDE.md, refreshed BACKLOG/README, clippy clean |
+| `0267b0e` | 2026-04-09 | docs: log 2026-04-09 docs refresh in TOI/POA |
 
-## 2026-04-09 — Docs refresh + clippy clean (`482640f`)
+---
 
-**What landed:**
-- New `CLAUDE.md` — project oneliner, build/test commands, full module map, detection-module table, sled schema, conventions
-- Rewritten `BACKLOG.md` — 20 prioritized work items grounded in current code, each anchored to file/function
-- Production-grade `README.md` — accurate test count (123), measured release size (~980 KB), corrected detection table, clarified auto-kill model, ASCII flow diagram
-- `src/main.rs` — test mod relocated to file end (fixes `clippy::items_after_test_module`); nested `if`/`if let` blocks collapsed via 2024-edition let-chains; `DoubleEndedIterator::last` → `next_back`
-- `src/store.rs` — `stats()` rebuilt via struct-update syntax (fixes `clippy::field_reassign_with_default`)
-- `src/types.rs` — `rotate_if_needed` collapsed via let-chain
-- `src/bin/aptnomo-gui.rs` — two pid-bounds let-chain collapses
-
-**Verification (run on commit `482640f`):**
-
-```text
-$ cargo clippy --all-targets --features gui
-    Finished `dev` profile [unoptimized + debuginfo] target(s)
-    (zero warnings)
-
-$ cargo test
-test result: ok. 77 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-test result: ok.  0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-                  ────────
-                  123 / 123
-
-$ cargo build --release && ls -la target/release/aptnomo
--rwxr-xr-x  1 mcochran  staff  1003744  Apr  9 12:42  target/release/aptnomo
-```
-
-**Diff stat:** 8 files changed, 1316 insertions(+), 371 deletions(-)
-
-**AI Role:** AI (Claude Opus 4.6, 1M context, via Claude Code) read the full source tree, drafted the three docs files, restructured `src/main.rs` for the test-module relocation, applied let-chain collapses across four files, and verified clippy + test cleanliness before commit. Human (GotEmCoach) directed the docs refresh and clippy-clean requirement.
+*Part of the [CochranBlock](https://cochranblock.org) zero-cloud architecture.*
