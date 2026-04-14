@@ -6,7 +6,7 @@ Tiny binary autonomous APT threat hunter for bare-metal Linux. Single Rust crate
 
 ```sh
 cargo build                              # daemon only (default features)
-cargo build --release                    # size-optimized daemon (~1 MB)
+cargo build --release                    # size-first daemon (~1 MB)
 cargo build --features gui               # daemon + GUI binary
 cargo build --release --features gui     # release GUI build
 cargo build --features tests             # test binary (pulls exopack from git)

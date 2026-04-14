@@ -133,8 +133,8 @@ The release profile in `Cargo.toml`:
 
 ```toml
 [profile.release]
-opt-level    = "z"      # size-first optimization
-lto          = true     # link-time optimization
+opt-level    = "z"      # size-first (shrink over speed)
+lto          = true     # link-time dead-code strip
 codegen-units = 1
 panic        = "abort"
 strip        = true
