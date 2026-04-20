@@ -57,3 +57,36 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# ─── SPEED-DIAMOND ──────────────────────────────────────────────────
+# For laptops, servers, desktops, and anything request-serving. Runtime
+# hot paths dominate total cost over binary-distribution size.
+
+[profile.diamond]
+inherits = "release"
+opt-level = 3              # maximum LLVM speed pass
+lto = "fat"                # cross-crate inlining, full monomorphized dedup
+codegen-units = 1          # one crystal, no fracture planes
+strip = true               # symbols don't run, they just ride along
+panic = "abort"            # cull unwinding machinery (-50-300 KB)
+overflow-checks = false    # trust the arithmetic, check explicitly when needed
+debug = false              # DWARF is heavy
+incremental = false        # incremental caches are fracture planes
+split-debuginfo = "off"    # no separate .dSYM or .pdb
+
+# ─── SIZE-DIAMOND (edge) ────────────────────────────────────────────
+# For phones, edge compute, spacecraft, embedded, and anything where
+# the binary ships to many places and every byte crosses a bandwidth-
+# constrained link. Canonical pick for aptnomo (already sub-1 MB).
+
+[profile.diamond-edge]
+inherits = "release"
+opt-level = "s"            # size-first LLVM pass
+lto = "fat"                # still fat — we want the dedup even for size
+codegen-units = 1          # still one crystal
+strip = true               # still stripped
+panic = "abort"            # still no unwinding
+overflow-checks = false    # still no runtime overflow checks
+debug = false              # still no debug info
+incremental = false        # still no incremental caches
+split-debuginfo = "off"    # still no separate debug files
